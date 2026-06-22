@@ -1,19 +1,28 @@
 /// LoginScreen - User authentication screen.
 ///
-/// Provides email and password fields with validation,
-/// login functionality via [AuthViewModel], and navigation
-/// to register screen.
+/// Premium editorial login experience aligned with ALPACA design guidelines.
+/// Features a hero photo header with dark green overlay at the top.
+/// Typography: DM Serif Display (headings) + Plus Jakarta Sans (UI).
+/// Colors: Deep Natural Green #2A5C45, Off-White #F7F5F0, Near Black #1C1917.
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'package:alpaca_mobile/viewmodels/auth_view_model.dart';
+import 'package:alpaca_mobile/viewmodels/location_view_model.dart';
+import 'package:alpaca_mobile/models/user_model.dart';
 import 'package:alpaca_mobile/core/routes/route_names.dart';
 import 'package:alpaca_mobile/core/validators/form_validators.dart';
 
-/// Login screen with email/password authentication.
+import 'package:alpaca_mobile/core/theme/app_theme.dart';
+import 'package:alpaca_mobile/widgets/gradient_button.dart';
+
+/// Login screen with email/password + Google authentication.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -21,297 +30,282 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen>
+    with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _emailFocus = FocusNode();
+  final _passwordFocus = FocusNode();
   bool _obscurePassword = true;
+
+  late final AnimationController _contentCtrl;
+  late final Animation<double> _contentFade;
+  late final Animation<Offset> _contentSlide;
+
+  @override
+  void initState() {
+    super.initState();
+
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ));
+
+    _contentCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _contentFade =
+        CurvedAnimation(parent: _contentCtrl, curve: Curves.easeOut);
+    _contentSlide = Tween<Offset>(
+      begin: const Offset(0, 0.06),
+      end: Offset.zero,
+    ).animate(
+        CurvedAnimation(parent: _contentCtrl, curve: Curves.easeOutCubic));
+    _contentCtrl.forward();
+  }
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _emailFocus.dispose();
+    _passwordFocus.dispose();
+    _contentCtrl.dispose();
     super.dispose();
   }
 
-  /// Validates form and attempts login via [AuthViewModel].
+  // ── Handlers ────────────────────────────────────────────────────────────
+
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
     final authViewModel = context.read<AuthViewModel>();
-
     await authViewModel.login(
       _emailController.text.trim(),
       _passwordController.text,
     );
 
     if (!mounted) return;
-    _showErrorIfAny(authViewModel);
-  }
 
-  /// Handles Google Sign-In flow.
-  Future<void> _handleGoogleSignIn() async {
-    final authViewModel = context.read<AuthViewModel>();
-
-    await authViewModel.signInWithGoogle();
-
-    if (!mounted) return;
-    _showErrorIfAny(authViewModel);
-  }
-
-  /// Shows error snackbar if authentication failed.
-  /// Navigation on success is handled automatically by GoRouter redirect.
-  void _showErrorIfAny(AuthViewModel authViewModel) {
-    if (!authViewModel.isAuthenticated && authViewModel.error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(authViewModel.error ?? 'Login gagal'),
-          backgroundColor: Theme.of(context).colorScheme.error,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
-        ),
-      );
+    if (authViewModel.isAuthenticated) {
+      if (authViewModel.userRole == UserRole.ownerUmkm) {
+        final userId = authViewModel.currentUser?.id;
+        if (userId != null) {
+          await context.read<LocationViewModel>().getCurrentLocation(userId);
+          await Future.delayed(const Duration(milliseconds: 100));
+        }
+      }
+      _printFirebaseToken();
+    } else {
+      _showError(
+          authViewModel.error ?? 'Login gagal. Periksa kembali data Anda.');
     }
   }
+
+  // Future<void> _handleGoogleSignIn() async {
+  //   final authViewModel = context.read<AuthViewModel>();
+  //   await authViewModel.signInWithGoogle();
+
+  //   if (!mounted) return;
+
+  //   if (authViewModel.isAuthenticated) {
+  //     if (authViewModel.userRole == UserRole.ownerUmkm) {
+  //       final userId = authViewModel.currentUser?.id;
+  //       if (userId != null) {
+  //         await context.read<LocationViewModel>().getCurrentLocation(userId);
+  //         await Future.delayed(const Duration(milliseconds: 100));
+  //       }
+  //     }
+  //     _printFirebaseToken();
+  //   } else {
+  //     _showError(authViewModel.error ?? 'Login Google gagal.');
+  //   }
+  // }
+
+  Future<void> _printFirebaseToken() async {
+    final fcmToken = await FirebaseMessaging.instance.getToken();
+    debugPrint('FCM Token: $fcmToken');
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: AppText.ui(size: 13, color: Colors.white),
+        ),
+        backgroundColor: AppColors.error,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
+  // ── Build ────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final authViewModel = context.watch<AuthViewModel>();
-    final size = MediaQuery.of(context).size;
-    final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      body: SafeArea(
-        child: Center(
+      backgroundColor: AppColors.bg,
+      body: FadeTransition(
+        opacity: _contentFade,
+        child: SlideTransition(
+          position: _contentSlide,
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: 400,
-                minHeight: size.height - MediaQuery.of(context).padding.vertical,
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Header
-                  Icon(
-                    Icons.eco_rounded,
-                    size: 56,
-                    color: colorScheme.primary,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'ALPACA',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: colorScheme.primary,
-                      letterSpacing: 4,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Masuk ke akun Anda',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 48),
+            physics: const ClampingScrollPhysics(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── Hero Photo Section ──────────────────────────────────
+                _HeroHeader(),
 
-                  // Login form
-                  Form(
-                    key: _formKey,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // Email field
-                        TextFormField(
-                          controller: _emailController,
-                          keyboardType: TextInputType.emailAddress,
-                          textInputAction: TextInputAction.next,
-                          validator: FormValidators.email,
-                          decoration: InputDecoration(
-                            labelText: 'Email',
-                            hintText: 'contoh@email.com',
-                            prefixIcon: const Icon(Icons.email_outlined),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: colorScheme.outline,
-                              ),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: colorScheme.primary,
-                                width: 2,
-                              ),
-                            ),
-                          ),
+                // ── Form Content ────────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 32),
+
+                      // Page heading
+                      Text(
+                        'Selamat\nDatang Kembali',
+                        style: AppText.display(
+                          size: 32,
+                          color: AppColors.textPrimary,
+                          height: 1.2,
                         ),
-                        const SizedBox(height: 16),
-
-                        // Password field
-                        TextFormField(
-                          controller: _passwordController,
-                          obscureText: _obscurePassword,
-                          textInputAction: TextInputAction.done,
-                          validator: FormValidators.password,
-                          onFieldSubmitted: (_) => _handleLogin(),
-                          decoration: InputDecoration(
-                            labelText: 'Password',
-                            hintText: 'Masukkan password',
-                            prefixIcon: const Icon(Icons.lock_outlined),
-                            suffixIcon: IconButton(
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility_off_outlined
-                                    : Icons.visibility_outlined,
-                              ),
-                              onPressed: () {
-                                setState(() {
-                                  _obscurePassword = !_obscurePassword;
-                                });
-                              },
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: colorScheme.outline,
-                              ),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: colorScheme.primary,
-                                width: 2,
-                              ),
-                            ),
-                          ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Masuk untuk melanjutkan perjalanan\nbisnis agraris Anda.',
+                        style: AppText.ui(
+                          size: 14,
+                          color: AppColors.textSecondary,
+                          height: 1.6,
                         ),
-                        const SizedBox(height: 32),
+                      ),
 
-                        // Login button
-                        FilledButton(
-                          onPressed: authViewModel.isLoading ? null : _handleLogin,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: colorScheme.primary,
-                            foregroundColor: colorScheme.onPrimary,
-                            minimumSize: const Size(double.infinity, 52),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                      const SizedBox(height: 36),
+
+                      // ── Login form ─────────────────────────────────
+                      Form(
+                        key: _formKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Email
+                            const _FieldLabel(label: 'Email'),
+                            const SizedBox(height: 8),
+                            _AlpacaTextField(
+                              controller: _emailController,
+                              focusNode: _emailFocus,
+                              hint: 'nama@email.com',
+                              keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.next,
+                              validator: FormValidators.email,
+                              onEditingComplete: () => FocusScope.of(context)
+                                  .requestFocus(_passwordFocus),
                             ),
-                          ),
-                          child: authViewModel.isLoading
-                              ? SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.5,
-                                    color: colorScheme.onPrimary,
-                                  ),
-                                )
-                              : const Text(
-                                  'Masuk',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
+
+                            const SizedBox(height: 20),
+
+                            // Password
+                            const _FieldLabel(label: 'Kata Sandi'),
+                            const SizedBox(height: 8),
+                            _AlpacaTextField(
+                              controller: _passwordController,
+                              focusNode: _passwordFocus,
+                              hint: '••••••••',
+                              obscureText: _obscurePassword,
+                              textInputAction: TextInputAction.done,
+                              validator: FormValidators.password,
+                              onEditingComplete: _handleLogin,
+                              suffixIcon: GestureDetector(
+                                onTap: () => setState(
+                                    () => _obscurePassword = !_obscurePassword),
+                                child: Icon(
+                                  _obscurePassword
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                  size: 18,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ),
+
+                            const SizedBox(height: 32),
+
+                            // Primary CTA
+                            AlpacaGradientButton(
+                              label: 'Masuk',
+                              isLoading: authViewModel.isLoading,
+                              onPressed: _handleLogin,
+                              gradientColors: const [
+                                Color(0xFF1E3A2F),
+                                Color(0xFF2A5C45),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      // ── Divider ───────────────────────────────────
+                      // const _OrDivider(),
+
+                      const SizedBox(height: 24),
+
+                      // ── Google Sign-In ────────────────────────────
+                      // _GoogleButton(
+                      //   isLoading: authViewModel.isLoading,
+                      //   onPressed: _handleGoogleSignIn,
+                      // ),
+
+                      // const SizedBox(height: 10),
+
+                      // ── Register link ─────────────────────────────
+                      Center(
+                        child: RichText(
+                          text: TextSpan(
+                            style: AppText.ui(
+                              size: 13,
+                              color: AppColors.textSecondary,
+                            ),
+                            children: [
+                              const TextSpan(text: 'Belum punya akun? '),
+                              WidgetSpan(
+                                alignment: PlaceholderAlignment.baseline,
+                                baseline: TextBaseline.alphabetic,
+                                child: GestureDetector(
+                                  onTap: () =>
+                                      context.push(RouteNames.register),
+                                  child: Text(
+                                    'Daftar Sekarang',
+                                    style: AppText.ui(
+                                      size: 13,
+                                      weight: FontWeight.w600,
+                                      color: AppColors.primary,
+                                    ),
                                   ),
                                 ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Divider
-                  Row(
-                    children: [
-                      Expanded(child: Divider(color: colorScheme.outlineVariant)),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text(
-                          'atau',
-                          style: TextStyle(
-                            color: colorScheme.onSurfaceVariant,
-                            fontSize: 13,
+                              ),
+                            ],
                           ),
                         ),
                       ),
-                      Expanded(child: Divider(color: colorScheme.outlineVariant)),
+
+                      const SizedBox(height: 40),
                     ],
                   ),
-                  const SizedBox(height: 24),
-
-                  // Google Sign-In button
-                  OutlinedButton.icon(
-                    onPressed: authViewModel.isLoading ? null : _handleGoogleSignIn,
-                    icon: Image.network(
-                      'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
-                      width: 20,
-                      height: 20,
-                      errorBuilder: (_, __, ___) => const Icon(
-                        Icons.g_mobiledata,
-                        size: 24,
-                        color: Colors.red,
-                      ),
-                    ),
-                    label: const Text(
-                      'Masuk dengan Google',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: colorScheme.onSurface,
-                      minimumSize: const Size(double.infinity, 52),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      side: BorderSide(color: colorScheme.outline),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-
-                  // Register link
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        'Belum punya akun? ',
-                        style: TextStyle(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () {
-                          context.push(RouteNames.register);
-                        },
-                        child: Text(
-                          'Daftar',
-                          style: TextStyle(
-                            color: colorScheme.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
@@ -319,3 +313,284 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 }
+
+// ─── Hero Header with photo + overlay ───────────────────────────────────────
+
+/// Full-width hero section: agricultural landscape photo with deep green
+/// semi-transparent overlay and the ALPACA brand mark on top.
+class _HeroHeader extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final topPad = MediaQuery.of(context).padding.top;
+
+    return SizedBox(
+      height: 220 + topPad,
+      width: double.infinity,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // ── Background photo ─────────────────────────────────────────
+          Image.asset(
+            'assets/images/hero_farm.png',
+            fit: BoxFit.cover,
+          ),
+
+          // ── Dark green overlay (60% opacity) ─────────────────────────
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  const Color(0xFF1E3A2F).withValues(alpha: 0.72),
+                  const Color(0xFF2A5C45).withValues(alpha: 0.78),
+                ],
+              ),
+            ),
+          ),
+
+          // ── Brand mark on top ─────────────────────────────────────────
+          Positioned(
+            top: topPad + 16,
+            left: 0,
+            right: 0,
+            child: const _BrandMarkWhite(),
+          ),
+
+          // ── Tagline at bottom of hero ─────────────────────────────────
+          Positioned(
+            bottom: 10,
+            left: 24,
+            right: 24,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Center(
+                  child: Text(
+                    'ALPACA',
+                    style: GoogleFonts.dmSerifDisplay(
+                      fontSize: 22,
+                      color: Colors.white,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 45),
+                Center(
+                  child: Text(
+                    'Terhubung, Berkembang, Berkelanjutan',
+                    style: AppText.ui(
+                      size: 12,
+                      color: Colors.white.withValues(alpha: 0.9),
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Shared UI Components ────────────────────────────────────────────────────
+
+/// White brand mark for use on dark/photo backgrounds
+class _BrandMarkWhite extends StatelessWidget {
+  const _BrandMarkWhite();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.max,
+        mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+          Image.asset(
+            'assets/icons/alpaca_icons_clear.png',
+            width: 120,
+            height: 120,
+            fit: BoxFit.cover,
+          ),
+        ],
+      )
+    );
+  }
+}
+
+/// Field label text
+class _FieldLabel extends StatelessWidget {
+  final String label;
+
+  const _FieldLabel({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      label,
+      style: AppText.ui(
+        size: 13,
+        weight: FontWeight.w600,
+        color: AppColors.textPrimary,
+        letterSpacing: 0.1,
+      ),
+    );
+  }
+}
+
+/// Custom text field following ALPACA design language
+class _AlpacaTextField extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode? focusNode;
+  final String hint;
+  final bool obscureText;
+  final TextInputType? keyboardType;
+  final TextInputAction? textInputAction;
+  final String? Function(String?)? validator;
+  final VoidCallback? onEditingComplete;
+  final Widget? suffixIcon;
+
+  const _AlpacaTextField({
+    required this.controller,
+    this.focusNode,
+    required this.hint,
+    this.obscureText = false,
+    this.keyboardType,
+    this.textInputAction,
+    this.validator,
+    this.onEditingComplete,
+    this.suffixIcon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: controller,
+      focusNode: focusNode,
+      obscureText: obscureText,
+      keyboardType: keyboardType,
+      textInputAction: textInputAction,
+      validator: validator,
+      onEditingComplete: onEditingComplete,
+      style: AppText.ui(
+        size: 14,
+        color: AppColors.textPrimary,
+        weight: FontWeight.w400,
+      ),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: AppText.ui(
+          size: 14,
+          color: AppColors.textSecondary.withValues(alpha: 0.6),
+        ),
+        errorStyle: AppText.ui(size: 12, color: AppColors.error),
+        suffixIcon: suffixIcon != null
+            ? Padding(
+                padding: const EdgeInsets.only(right: 14),
+                child: suffixIcon,
+              )
+            : null,
+        suffixIconConstraints:
+            const BoxConstraints(minWidth: 40, minHeight: 40),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
+        ),
+        filled: true,
+        fillColor: AppColors.surface,
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.border, width: 1),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.borderFocus, width: 1.5),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.error, width: 1),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.error, width: 1.5),
+        ),
+      ),
+    );
+  }
+}
+
+/// "atau" divider
+// class _OrDivider extends StatelessWidget {
+//   const _OrDivider();
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return Row(
+//       children: [
+//         Expanded(child: Container(height: 1, color: AppColors.border)),
+//         Padding(
+//           padding: const EdgeInsets.symmetric(horizontal: 16),
+//           child: Text(
+//             'atau',
+//             style: AppText.ui(size: 12, color: AppColors.textSecondary),
+//           ),
+//         ),
+//         Expanded(child: Container(height: 1, color: AppColors.border)),
+//       ],
+//     );
+//   }
+// }
+
+// /// Google sign-in outlined button
+// class _GoogleButton extends StatelessWidget {
+//   final bool isLoading;
+//   final VoidCallback? onPressed;
+
+//   const _GoogleButton({required this.isLoading, this.onPressed});
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return SizedBox(
+//       height: 52,
+//       child: OutlinedButton(
+//         onPressed: isLoading ? null : onPressed,
+//         style: OutlinedButton.styleFrom(
+//           backgroundColor: AppColors.surface,
+//           side: const BorderSide(color: AppColors.border, width: 1),
+//           shape: RoundedRectangleBorder(
+//             borderRadius: BorderRadius.circular(12),
+//           ),
+//         ),
+//         child: Row(
+//           mainAxisAlignment: MainAxisAlignment.center,
+//           children: [
+//             // Google G icon (colored)
+//             RichText(
+//               text: TextSpan(
+//                 style: const TextStyle(
+//                     fontSize: 16, fontWeight: FontWeight.w700, height: 1),
+//                 children: [
+//                   TextSpan(
+//                       text: 'G',
+//                       style: TextStyle(color: const Color(0xFF4285F4))),
+//                 ],
+//               ),
+//             ),
+//             const SizedBox(width: 10),
+//             Text(
+//               'Masuk dengan Google',
+//               style: AppText.ui(
+//                 size: 14,
+//                 weight: FontWeight.w500,
+//                 color: AppColors.textPrimary,
+//               ),
+//             ),
+//           ],
+//         ),
+//       ),
+//     );
+//   }
+// }

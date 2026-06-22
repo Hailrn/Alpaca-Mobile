@@ -4,9 +4,8 @@ import 'package:flutter/foundation.dart';
 
 import 'package:alpaca_mobile/models/product_model.dart';
 import 'package:alpaca_mobile/repositories/product_repository.dart';
-
-/// Represents the current state of a view.
-enum ViewState { initial, loading, loaded, error, empty }
+import 'package:alpaca_mobile/core/services/cache_service.dart';
+import 'package:alpaca_mobile/core/enums/view_state.dart';
 
 /// ViewModel for product catalog management.
 ///
@@ -15,10 +14,14 @@ enum ViewState { initial, loading, loaded, error, empty }
 /// public product showcase.
 class ProductViewModel extends ChangeNotifier {
   /// Creates a [ProductViewModel] with the given [ProductRepository].
-  ProductViewModel({required ProductRepository productRepository})
-      : _productRepository = productRepository;
+  ProductViewModel({
+    required ProductRepository productRepository,
+    CacheService? cacheService,
+  }) : _productRepository = productRepository,
+       _cacheService = cacheService;
 
   final ProductRepository _productRepository;
+  final CacheService? _cacheService;
 
   // --- State ---
 
@@ -42,6 +45,14 @@ class ProductViewModel extends ChangeNotifier {
   /// All public/available products (visible to customers/tourists).
   List<ProductModel> get allProducts => List.unmodifiable(_allProducts);
 
+  List<ProductModel> _storeProducts = [];
+  /// Products belonging to a specific store being viewed in profile.
+  List<ProductModel> get storeProducts => List.unmodifiable(_storeProducts);
+
+  ProductModel? _selectedProduct;
+  /// The currently selected product for detail view.
+  ProductModel? get selectedProduct => _selectedProduct;
+
   /// Products where current stock is at or below the minimum threshold.
   List<ProductModel> get lowStockProducts =>
       _products.where((p) => p.isLowStock).toList();
@@ -53,7 +64,7 @@ class ProductViewModel extends ChangeNotifier {
 
   /// Loads products for the given [ownerId].
   ///
-  /// Fetches the owner's product catalog from Firestore.
+  /// Fetches the owner's product catalog from the API.
   Future<void> loadProducts(String ownerId) async {
     _setLoading(true);
     _clearError();
@@ -74,35 +85,61 @@ class ProductViewModel extends ChangeNotifier {
     _setLoading(false);
   }
 
-  /// Subscribes to all publicly available products in realtime.
+  /// Loads all publicly available products.
   ///
   /// Used by customers/tourists to browse the product catalog.
+  /// Serves cached data instantly while fetching fresh data in background.
   /// Only includes products where [ProductModel.isAvailable] is true.
-  void loadAllProducts() {
-    _allProductsSubscription?.cancel();
-    _viewState = ViewState.loading;
-    notifyListeners();
+  Future<void> loadAllProducts() async {
+    const cacheKey = 'all_products';
 
-    _allProductsSubscription =
-        _productRepository.streamAllProducts().listen(
-      (products) {
+    // Serve cached data first for instant UX while fetching fresh data.
+    if (_cacheService != null && _allProducts.isEmpty) {
+      final cached = _cacheService!.load<List>(cacheKey);
+      if (cached != null) {
+        _allProducts = cached
+            .map((e) => ProductModel.fromJson(e as Map<String, dynamic>))
+            .toList();
+        _viewState = ViewState.loaded;
+        notifyListeners();
+      }
+    }
+
+    _setLoading(true);
+    _clearError();
+
+    final result = await _productRepository.getAllProducts();
+
+    result.when(
+      success: (products) {
         _allProducts = products;
         _viewState = products.isEmpty ? ViewState.empty : ViewState.loaded;
-        _isLoading = false;
-        notifyListeners();
+
+        // Cache the result for fast subsequent loads.
+        if (_cacheService != null && products.isNotEmpty) {
+          final productsJson = products.map((p) => p.toJson()).toList();
+          _cacheService!.save(
+            key: cacheKey,
+            data: productsJson,
+            ttl: const Duration(minutes: 15),
+          );
+        }
       },
-      onError: (Object error) {
-        _error = error.toString();
-        _viewState = ViewState.error;
-        _isLoading = false;
-        notifyListeners();
+      failure: (exception) {
+        // Keep cached data visible if available; only show error when no data.
+        if (_allProducts.isEmpty) {
+          _error = exception.message;
+          _viewState = ViewState.error;
+        }
       },
     );
+
+    _setLoading(false);
   }
 
   /// Adds a new product to the catalog.
   ///
-  /// On success, the product (with the generated Firestore ID) is
+  /// On success, the product (with the generated ID) is
   /// appended to the local owner's product list.
   Future<void> addProduct(ProductModel product) async {
     _setLoading(true);
@@ -111,8 +148,7 @@ class ProductViewModel extends ChangeNotifier {
     final result = await _productRepository.addProduct(product);
 
     result.when(
-      success: (docId) {
-        final savedProduct = product.copyWith(id: docId);
+      success: (savedProduct) {
         _products.add(savedProduct);
         _viewState = ViewState.loaded;
       },
@@ -132,7 +168,7 @@ class ProductViewModel extends ChangeNotifier {
     _setLoading(true);
     _clearError();
 
-    final result = await _productRepository.updateProduct(product);
+    final result = await _productRepository.updateProduct(product.id, product.toJson());
 
     result.when(
       success: (_) {
@@ -180,6 +216,29 @@ class ProductViewModel extends ChangeNotifier {
     _setLoading(false);
   }
 
+  /// Loads a single product by its [productId] for the detail view.
+  ///
+  /// Fetches the product directly from the API endpoint.
+  Future<void> loadProductById(String productId) async {
+    _setLoading(true);
+    _clearError();
+
+    final result = await _productRepository.getProduct(productId);
+
+    result.when(
+      success: (product) {
+        _selectedProduct = product;
+        _viewState = ViewState.loaded;
+      },
+      failure: (exception) {
+        _error = exception.message;
+        _viewState = ViewState.error;
+      },
+    );
+
+    _setLoading(false);
+  }
+
   /// Filters the all-products list by [category].
   ///
   /// Returns a filtered view without modifying the underlying data.
@@ -188,9 +247,33 @@ class ProductViewModel extends ChangeNotifier {
     if (category == null || category.isEmpty) {
       return List.unmodifiable(_allProducts);
     }
+    final normalizedCategory = ProductModel.normalizeCategory(category);
     return _allProducts
-        .where((p) => p.category.toLowerCase() == category.toLowerCase())
+        .where((p) => p.normalizedCategory == normalizedCategory)
         .toList();
+  }
+
+  /// Loads products for a specific store owner (for store profile view).
+  ///
+  /// Populates [storeProducts] without affecting the main [products] list.
+  Future<void> loadStoreProducts(String ownerId) async {
+    _setLoading(true);
+    _clearError();
+
+    final result = await _productRepository.getProductsByOwner(ownerId);
+
+    result.when(
+      success: (products) {
+        _storeProducts = products;
+        _viewState = products.isEmpty ? ViewState.empty : ViewState.loaded;
+      },
+      failure: (exception) {
+        _error = exception.message;
+        _viewState = ViewState.error;
+      },
+    );
+
+    _setLoading(false);
   }
 
   /// Subscribes to realtime product updates for the given [ownerId].

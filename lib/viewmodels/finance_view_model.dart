@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
@@ -62,22 +62,21 @@ class FinanceViewModel extends ChangeNotifier {
     DateTime? startDate,
     DateTime? endDate,
   }) async {
+    print('[FinanceViewModel] loadTransactions called for owner: $ownerId');
     _setLoading(true);
     _clearError();
 
-    final result = await _transactionRepository.getTransactions(
-      ownerId,
-      startDate: startDate,
-      endDate: endDate,
-    );
+    final result = await _transactionRepository.getTransactions(ownerId);
 
     result.when(
       success: (transactions) {
+        print('[FinanceViewModel] loadTransactions success: ${transactions.length} items');
         _transactions = transactions;
         _viewState =
             transactions.isEmpty ? ViewState.empty : ViewState.loaded;
       },
       failure: (exception) {
+        print('[FinanceViewModel] loadTransactions failed: ${exception.message}');
         _error = exception.message;
         _viewState = ViewState.error;
       },
@@ -92,18 +91,20 @@ class FinanceViewModel extends ChangeNotifier {
   /// appended to the local list and totals are recalculated automatically
   /// via computed getters.
   Future<void> addTransaction(TransactionModel transaction) async {
+    print('[FinanceViewModel] addTransaction called');
     _setLoading(true);
     _clearError();
 
     final result = await _transactionRepository.addTransaction(transaction);
 
     result.when(
-      success: (docId) {
-        final savedTransaction = transaction.copyWith(id: docId);
+      success: (savedTransaction) {
+        print('[FinanceViewModel] addTransaction success: ${savedTransaction.id}');
         _transactions.add(savedTransaction);
         _viewState = ViewState.loaded;
       },
       failure: (exception) {
+        print('[FinanceViewModel] addTransaction failed: ${exception.message}');
         _error = exception.message;
         _viewState = ViewState.error;
       },
@@ -119,7 +120,7 @@ class FinanceViewModel extends ChangeNotifier {
     _setLoading(true);
     _clearError();
 
-    final result = await _transactionRepository.updateTransaction(transaction);
+    final result = await _transactionRepository.updateTransaction(transaction.id, transaction.toJson());
 
     result.when(
       success: (_) {
@@ -250,3 +251,5 @@ class FinanceViewModel extends ChangeNotifier {
     super.dispose();
   }
 }
+
+

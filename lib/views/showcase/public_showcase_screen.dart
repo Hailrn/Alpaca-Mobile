@@ -1,29 +1,25 @@
-/// Public showcase screen for browsing products.
+/// PublicShowcaseScreen — Customer home / product discovery screen.
 ///
-/// Displays a public-facing product catalog with search,
-/// category filtering, and navigation to product details
-/// and business map.
+/// Redesigned following ALPACA design guidelines:
+/// editorial minimalist layout, DM Serif Display headings,
+/// Plus Jakarta Sans UI, primary green #2A5C45, amber pricing #C4813A.
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import 'package:alpaca_mobile/core/routes/route_names.dart';
-import 'package:alpaca_mobile/core/theme/app_colors.dart';
+import 'package:alpaca_mobile/core/theme/app_theme.dart';
+// import 'package:alpaca_mobile/core/theme/app_text_styles.dart';
 import 'package:alpaca_mobile/models/product_model.dart';
 import 'package:alpaca_mobile/viewmodels/product_view_model.dart';
+import 'package:alpaca_mobile/viewmodels/auth_view_model.dart';
+import 'package:alpaca_mobile/core/enums/view_state.dart' as vs;
+import 'package:alpaca_mobile/widgets/product_card.dart';
 
-/// Public-facing product catalog screen.
-///
-/// Features:
-/// - Grid of product cards with image, name, price
-/// - Search bar
-/// - Category filter chips
-/// - Tap to view product detail
-/// - App bar with map icon to view business locations
 class PublicShowcaseScreen extends StatefulWidget {
-  /// Creates a [PublicShowcaseScreen].
   const PublicShowcaseScreen({super.key});
 
   @override
@@ -32,20 +28,22 @@ class PublicShowcaseScreen extends StatefulWidget {
 
 class _PublicShowcaseScreenState extends State<PublicShowcaseScreen> {
   final _searchController = TextEditingController();
-  String? _selectedCategory;
+  String? _selectedCategory; // 'tani', 'umkm', 'agrowisata'
   String _searchQuery = '';
 
   static const _categories = [
-    'food',
-    'beverage',
-    'handicraft',
-    'agriculture',
-    'other',
+    'tani',
+    'umkm',
+    'agrowisata',
   ];
 
   @override
   void initState() {
     super.initState();
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+    ));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<ProductViewModel>().loadAllProducts();
     });
@@ -57,334 +55,456 @@ class _PublicShowcaseScreenState extends State<PublicShowcaseScreen> {
     super.dispose();
   }
 
+  String _getGreeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 11) {
+      return 'Selamat pagi,';
+    } else if (hour < 15) {
+      return 'Selamat siang,';
+    } else if (hour < 18) {
+      return 'Selamat sore,';
+    } else {
+      return 'Selamat malam,';
+    }
+  }
+
   String _categoryLabel(String category) {
-    switch (category) {
-      case 'food':
-        return 'Makanan';
-      case 'beverage':
-        return 'Minuman';
-      case 'handicraft':
-        return 'Kerajinan';
-      case 'agriculture':
-        return 'Pertanian';
-      default:
-        return 'Lainnya';
-    }
+    if (category == 'tani') return 'Produk Tani';
+    if (category == 'umkm') return 'UMKM Lokal';
+    if (category == 'agrowisata') return 'Agrowisata';
+    return category;
   }
 
-  String _formatPrice(double price) {
-    final formatted = price.toStringAsFixed(0).replaceAllMapped(
-          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-          (match) => '${match[1]}.',
-        );
-    return 'Rp $formatted';
-  }
-
-  List<ProductModel> _applyFilters(List<ProductModel> products) {
-    var filtered = products;
-
-    // Apply category filter
-    if (_selectedCategory != null && _selectedCategory!.isNotEmpty) {
-      filtered = filtered
-          .where((p) =>
-              p.category.toLowerCase() == _selectedCategory!.toLowerCase())
-          .toList();
-    }
-
-    // Apply search filter
+  List<ProductModel> _filterProducts(List<ProductModel> products) {
+    var filtered = products.where((p) => p.isAvailable).toList();
     if (_searchQuery.isNotEmpty) {
-      final query = _searchQuery.toLowerCase();
       filtered = filtered
           .where((p) =>
-              p.productName.toLowerCase().contains(query) ||
-              (p.description?.toLowerCase().contains(query) ?? false) ||
-              p.category.toLowerCase().contains(query))
+              p.productName.toLowerCase().contains(_searchQuery.toLowerCase()))
           .toList();
     }
-
+    if (_selectedCategory != null) {
+      if (_selectedCategory == 'tani') {
+        filtered = filtered
+            .where((p) => p.normalizedCategory == 'agriculture' || p.normalizedCategory == 'food')
+            .toList();
+      } else if (_selectedCategory == 'umkm') {
+        filtered = filtered
+            .where((p) => p.normalizedCategory == 'handicraft' || p.normalizedCategory == 'beverage')
+            .toList();
+      } else if (_selectedCategory == 'agrowisata') {
+        filtered = filtered
+            .where((p) => p.normalizedCategory == 'other')
+            .toList();
+      }
+    }
     return filtered;
   }
 
   @override
   Widget build(BuildContext context) {
     final productVm = context.watch<ProductViewModel>();
+    final authVm = context.watch<AuthViewModel>();
+    final filteredProducts = _filterProducts(productVm.allProducts);
+    
+    final fullName = authVm.currentUser?.displayName ?? 'Budi Santoso';
+    final firstName = fullName.split(' ').first;
+
+    // Recommendation list: just take first 4 products as mock recommendations
+    final recommendations = productVm.allProducts.take(4).toList();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('ALPACA Showcase'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.map_outlined),
-            tooltip: 'Peta Bisnis',
-            onPressed: () => context.push(RouteNames.showcaseMap),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Search bar
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Cari produk...',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _searchQuery = '');
-                        },
-                      )
-                    : null,
-              ),
-              onChanged: (value) {
-                setState(() => _searchQuery = value.trim());
-              },
-            ),
-          ),
+      backgroundColor: AppColors.bg,
+      body: SafeArea(
+        child: CustomScrollView(
+          physics: const BouncingScrollPhysics(),
+          slivers: [
+            // ── Greeting header ───────────────────────────────────────────
+            SliverToBoxAdapter(child: _buildHeader(fullName, firstName)),
 
-          // Category filter chips
-          SizedBox(
-            height: 48,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+            // ── Search bar ────────────────────────────────────────────────
+            SliverToBoxAdapter(child: _buildSearchBar()),
+
+            // ── Category filters ──────────────────────────────────────────
+            SliverToBoxAdapter(child: _buildCategories()),
+
+            // ── Promo Banner ──────────────────────────────────────────────
+            SliverToBoxAdapter(child: _buildHeroBanner()),
+
+            // ── Rekomendasi Terdekat ──────────────────────────────────────
+            if (!productVm.isLoading && recommendations.isNotEmpty && _selectedCategory == null && _searchQuery.isEmpty) ...[
+              SliverToBoxAdapter(child: _buildRekomendasiHeader()),
+              SliverToBoxAdapter(child: _buildRekomendasiHorizontalList(recommendations)),
+            ],
+
+            // ── Section label ─────────────────────────────────────────────
+            if (!productVm.isLoading && filteredProducts.isNotEmpty)
+              SliverToBoxAdapter(child: _buildSectionLabel(filteredProducts.length)),
+
+            // ── Content ───────────────────────────────────────────────────
+            if (productVm.viewState == vs.ViewState.error)
+              _buildErrorSliver(productVm.error,
+                  () => context.read<ProductViewModel>().loadAllProducts())
+            else if (productVm.isLoading && productVm.allProducts.isEmpty)
+              _buildLoadingSliver()
+            else if (filteredProducts.isEmpty)
+              _buildEmptySliver()
+            else
+              _buildProductGrid(filteredProducts),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Header ──────────────────────────────────────────────────────────────
+
+  Widget _buildHeader(String fullName, String firstName) {
+    final initials = fullName.isNotEmpty
+        ? fullName.trim().split(' ').map((e) => e[0]).take(2).join('').toUpperCase()
+        : 'NA';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.screenH, AppSpacing.lg, AppSpacing.screenH, AppSpacing.sm),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: FilterChip(
-                    label: const Text('Semua'),
-                    selected: _selectedCategory == null,
-                    onSelected: (_) {
-                      setState(() => _selectedCategory = null);
-                    },
+                Text(
+                  _getGreeting(),
+                  style: AppText.ui(
+                    size: 13,
+                    color: AppColors.textSecondary,
+                    weight: FontWeight.w500,
                   ),
                 ),
-                ..._categories.map(
-                  (category) => Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: FilterChip(
-                      label: Text(_categoryLabel(category)),
-                      selected: _selectedCategory == category,
-                      onSelected: (selected) {
-                        setState(() {
-                          _selectedCategory = selected ? category : null;
-                        });
-                      },
-                    ),
-                  ),
+                const SizedBox(height: 4),
+                Text(
+                  fullName,
+                  style: AppText.display(size: 24),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 4),
-
-          // Product grid
-          Expanded(child: _buildProductGrid(productVm)),
+          // Profile Avatar Circle - Tapping routes to customer profile
+          GestureDetector(
+            onTap: () => context.push(RouteNames.customerProfile),
+            child: CircleAvatar(
+              radius: 18,
+              backgroundColor: AppColors.primary,
+              child: Text(
+                initials,
+                style: AppText.ui(
+                  size: 13,
+                  weight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildProductGrid(ProductViewModel productVm) {
-    if (productVm.isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+  // ─── Search bar ───────────────────────────────────────────────────────────
 
-    if (productVm.error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.error_outline, size: 64, color: AppColors.error),
-              const SizedBox(height: 16),
-              Text(
-                productVm.error!,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: () => productVm.loadAllProducts(),
-                icon: const Icon(Icons.refresh),
-                label: const Text('Coba Lagi'),
-              ),
-            ],
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.screenH, AppSpacing.sm, AppSpacing.screenH, AppSpacing.md),
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.pill),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: TextField(
+          controller: _searchController,
+          onChanged: (v) => setState(() => _searchQuery = v),
+          style: AppText.ui(size: 14),
+          decoration: InputDecoration(
+            hintText: 'Cari produk atau toko...',
+            hintStyle: AppText.ui(size: 14, color: AppColors.textTertiary),
+            prefixIcon: const Icon(Icons.search_rounded,
+                color: AppColors.textSecondary, size: 20),
+            suffixIcon: _searchQuery.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    color: AppColors.textSecondary,
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() => _searchQuery = '');
+                    },
+                  )
+                : null,
+            border: InputBorder.none,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           ),
         ),
-      );
-    }
+      ),
+    );
+  }
 
-    final filteredProducts = _applyFilters(productVm.allProducts);
+  // ─── Categories ───────────────────────────────────────────────────────────
 
-    if (filteredProducts.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
+  Widget _buildCategories() {
+    return SizedBox(
+      height: 40,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.screenH),
+        children: [
+          AlpacaCategoryPill(
+            label: 'Semua',
+            selected: _selectedCategory == null,
+            onTap: () => setState(() => _selectedCategory = null),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          ..._categories.map((cat) => Padding(
+                padding: const EdgeInsets.only(right: AppSpacing.sm),
+                child: AlpacaCategoryPill(
+                  label: _categoryLabel(cat),
+                  selected: _selectedCategory == cat,
+                  onTap: () => setState(() => _selectedCategory = cat),
+                ),
+              )),
+        ],
+      ),
+    );
+  }
+
+  // ─── Promo Banner ──────────────────────────────────────────────────────────
+
+  Widget _buildHeroBanner() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.screenH, AppSpacing.md, AppSpacing.screenH, AppSpacing.sm),
+      child: Container(
+        height: 160,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          image: const DecorationImage(
+            image: AssetImage('assets/images/hero_agro_banner.png'),
+            fit: BoxFit.cover,
+          ),
+        ),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            gradient: LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [
+                AppColors.primaryDark.withValues(alpha: 0.85),
+                AppColors.primaryDark.withValues(alpha: 0.2),
+              ],
+            ),
+          ),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              Icon(
-                _searchQuery.isNotEmpty || _selectedCategory != null
-                    ? Icons.search_off
-                    : Icons.storefront_outlined,
-                size: 80,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                _searchQuery.isNotEmpty || _selectedCategory != null
-                    ? 'Tidak ada produk yang cocok'
-                    : 'Belum ada produk tersedia',
-                style: Theme.of(context).textTheme.titleMedium,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.amber,
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+                child: Text(
+                  'PROMO SPESIAL',
+                  style: AppText.micro(color: Colors.white).copyWith(fontWeight: FontWeight.bold),
+                ),
               ),
               const SizedBox(height: 8),
               Text(
-                _searchQuery.isNotEmpty || _selectedCategory != null
-                    ? 'Coba ubah kata kunci atau filter Anda'
-                    : 'Produk dari UMKM lokal akan ditampilkan di sini',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                'Jelajahi Keindahan Alam &\nProduk Lokal Terbaik',
+                style: AppText.display(size: 18, color: Colors.white),
               ),
             ],
           ),
         ),
-      );
+      ),
+    );
+  }
+
+  // ─── Rekomendasi Terdekat ──────────────────────────────────────────────────
+
+  Widget _buildRekomendasiHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.screenH, AppSpacing.lg, AppSpacing.screenH, AppSpacing.sm),
+      child: Text(
+        'Rekomendasi Terdekat',
+        style: AppText.sectionHeader(),
+      ),
+    );
+  }
+
+  Widget _buildRekomendasiHorizontalList(List<ProductModel> recommendations) {
+    final availableProducts = recommendations.where((product) {
+      return product.isAvailable == true; 
+    }).toList();
+
+    if (availableProducts.isEmpty) {
+      return const SizedBox.shrink(); 
     }
 
-    return RefreshIndicator(
-      onRefresh: () async => productVm.loadAllProducts(),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final crossAxisCount = constraints.maxWidth > 900
-              ? 4
-              : constraints.maxWidth > 600
-                  ? 3
-                  : 2;
-          return GridView.builder(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: crossAxisCount,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-              childAspectRatio: 0.72,
+    return SizedBox(
+      height: 190,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.screenH),
+        itemCount: availableProducts.length,
+        itemBuilder: (context, index) {
+          final product = availableProducts[index];
+          return Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: SizedBox(
+              width: 140,
+              child: GestureDetector(
+                onTap: () => context.push(RouteNames.productDetail(product.id)),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                    border: Border.all(color: AppColors.border),
+                    boxShadow: AppShadows.card(),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(AppRadius.lg)),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              product.imageUrl != null && product.imageUrl!.isNotEmpty
+                                  ? Image.network(
+                                      product.imageUrl!,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (ctx, err, stack) => _ImagePlaceholder(),
+                                    )
+                                  : _ImagePlaceholder(),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              product.productName,
+                              style: AppText.ui(
+                                  size: 12,
+                                  weight: FontWeight.w600),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              formatRupiah(product.price),
+                              style: AppText.price(size: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            itemCount: filteredProducts.length,
-            itemBuilder: (context, index) {
-              final product = filteredProducts[index];
-              return _ShowcaseProductCard(
-                product: product,
-                formattedPrice: _formatPrice(product.price),
-                onTap: () {
-                  context.push(RouteNames.productDetail(product.id));
-                },
-              );
-            },
           );
         },
       ),
     );
   }
-}
 
-/// A product card for the public showcase grid.
-class _ShowcaseProductCard extends StatelessWidget {
-  const _ShowcaseProductCard({
-    required this.product,
-    required this.formattedPrice,
-    required this.onTap,
-  });
+  // ─── Section label ────────────────────────────────────────────────────────
 
-  final ProductModel product;
-  final String formattedPrice;
-  final VoidCallback onTap;
+  Widget _buildSectionLabel(int count) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.screenH, AppSpacing.lg, AppSpacing.screenH, AppSpacing.sm),
+      child: Row(
+        children: [
+          Text(
+            _selectedCategory != null
+                ? _categoryLabel(_selectedCategory!)
+                : 'Semua Produk',
+            style: AppText.sectionHeader(),
+          ),
+          const Spacer(),
+          Text(
+            '$count produk',
+            style: AppText.label(),
+          ),
+        ],
+      ),
+    );
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Card(
-        margin: EdgeInsets.zero,
-        clipBehavior: Clip.antiAlias,
+  // ─── Product grid ─────────────────────────────────────────────────────────
+
+  Widget _buildProductGrid(List<ProductModel> products) {
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.screenH, 0,
+          AppSpacing.screenH, AppSpacing.xxl),
+      sliver: SliverGrid(
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          childAspectRatio: 0.72,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+        ),
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final product = products[index];
+            return ProductCard(
+              name: product.productName,
+              price: product.price.toInt(),
+              imageUrl: product.imageUrl,
+              category: _categoryLabel(product.normalizedCategory),
+              isAvailable: product.isAvailable,
+              onTap: () => context.push(RouteNames.productDetail(product.id)),
+            );
+          },
+          childCount: products.length,
+        ),
+      ),
+    );
+  }
+
+  // ─── States ───────────────────────────────────────────────────────────────
+
+  Widget _buildLoadingSliver() {
+    return const SliverFillRemaining(
+      child: Center(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Product image
-            Expanded(
-              flex: 3,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (product.imageUrl != null &&
-                      product.imageUrl!.isNotEmpty)
-                    Image.network(
-                      product.imageUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) =>
-                          _buildPlaceholder(),
-                    )
-                  else
-                    _buildPlaceholder(),
-                  // Category chip
-                  Positioned(
-                    top: 6,
-                    left: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        product.category,
-                        style:
-                            Theme.of(context).textTheme.labelSmall?.copyWith(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                ),
-                      ),
-                    ),
-                  ),
-                ],
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.primary,
               ),
             ),
-            // Product info
-            Expanded(
-              flex: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      product.productName,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const Spacer(),
-                    Text(
-                      formattedPrice,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                  ],
-                ),
-              ),
+            SizedBox(height: 16),
+            Text(
+              'Memuat produk...',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
             ),
           ],
         ),
@@ -392,15 +512,36 @@ class _ShowcaseProductCard extends StatelessWidget {
     );
   }
 
-  Widget _buildPlaceholder() {
+  Widget _buildEmptySliver() {
+    return SliverFillRemaining(
+      child: AlpacaEmptyState(
+        icon: Icons.search_off_rounded,
+        title: 'Produk Tidak Ditemukan',
+        subtitle: 'Coba kata kunci atau kategori yang berbeda',
+      ),
+    );
+  }
+
+  Widget _buildErrorSliver(String? message, VoidCallback onRetry) {
+    return SliverFillRemaining(
+      child: AlpacaEmptyState(
+        icon: Icons.wifi_off_rounded,
+        title: 'Gagal Memuat',
+        subtitle: message ?? 'Periksa koneksi internet Anda',
+        actionLabel: 'Coba Lagi',
+        onAction: onRetry,
+      ),
+    );
+  }
+}
+
+class _ImagePlaceholder extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      color: AppColors.surfaceVariant,
+      color: AppColors.surfaceMuted,
       child: const Center(
-        child: Icon(
-          Icons.image_outlined,
-          size: 40,
-          color: AppColors.onSurfaceVariant,
-        ),
+        child: Icon(Icons.image_outlined, size: 28, color: AppColors.textTertiary),
       ),
     );
   }

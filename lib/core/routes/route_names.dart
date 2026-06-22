@@ -9,6 +9,7 @@ class RouteNames {
   static const String splash = '/splash';
   static const String login = '/login';
   static const String register = '/register';
+  static const String businessOnboarding = '/onboarding/business';
 
   // Owner routes
   static const String ownerDashboard = '/owner/dashboard';
@@ -23,15 +24,23 @@ class RouteNames {
   // Public showcase routes
   static const String showcase = '/showcase';
   static const String showcaseProductDetail = '/showcase/product/:id';
-  static const String showcaseMap = '/showcase/map';
+  static const String showcaseNearby = '/showcase/nearby';
+  static const String showcaseStoreProfile = '/showcase/store/:ownerId';
+  
+  // Shared
+  static const String profileEdit = '/profile/edit';
+  static const String customerProfile = '/customer/profile';
 
   /// Routes that do not require authentication.
   static const List<String> publicRoutes = [
     splash,
     login,
     register,
+    businessOnboarding,
     showcase,
-    showcaseMap,
+    '/showcase/product',
+    showcaseNearby,
+    showcaseStoreProfile,
   ];
 
   /// Routes that are restricted to owner_umkm role only.
@@ -48,18 +57,29 @@ class RouteNames {
 
   /// Checks whether the given [route] requires authentication.
   static bool isProtected(String route) {
-    // Product detail route uses a parameter, so check prefix
+    // Routes with path parameters need prefix checks
     if (route.startsWith('/showcase/product/')) return false;
+    if (route.startsWith('/showcase/store/')) return false;
     return !publicRoutes.contains(route);
   }
 
   /// Checks whether the given [route] is restricted to owners.
   static bool isOwnerOnly(String route) {
+    if (route == profileEdit) return false; // shared
     return ownerOnlyRoutes.contains(route) ||
         route.startsWith('/owner/');
   }
 
   /// Generates the product detail path for a given [productId].
-  static String productDetail(String productId) =>
-      '/showcase/product/$productId';
+  static String productDetail(String productId) {
+    if (productId.isEmpty) {
+      print('[RouteNames] ERROR: productId is empty!');
+      return '/showcase'; // Fallback to showcase
+    }
+    return '/showcase/product/$productId';
+  }
+
+  /// Generates the store profile path for a given [ownerId].
+  static String storeProfile(String ownerId) =>
+      '/showcase/store/$ownerId';
 }

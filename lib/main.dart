@@ -17,6 +17,7 @@ import 'core/theme/app_theme.dart';
 import 'firebase_options.dart';
 import 'providers/app_providers.dart';
 import 'viewmodels/auth_view_model.dart';
+import 'viewmodels/location_view_model.dart';
 
 /// Application entry point.
 ///
@@ -84,6 +85,7 @@ class AlpacaApp extends StatelessWidget {
             themeMode: ThemeMode.light,
             routerConfig: AppRouter.createRouter(
               context.read<AuthViewModel>(),
+              context.read<LocationViewModel>(),
             ),
             debugShowCheckedModeBanner: false,
           );
@@ -158,3 +160,5 @@ class InitializationErrorApp extends StatelessWidget {
     );
   }
 }
+
+

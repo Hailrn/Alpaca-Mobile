@@ -1,212 +1,398 @@
-/// Product detail screen for the public showcase.
+/// ProductDetailScreen — Immersive product detail with sticky WhatsApp CTA.
 ///
-/// Displays full product information including image, name,
-/// description, price, and owner/business details.
+/// Redesigned following ALPACA design guidelines:
+/// large hero photo, DM Serif Display product name, amber pricing,
+/// flat clean sections, no gradients.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:alpaca_mobile/core/routes/route_names.dart';
-import 'package:alpaca_mobile/core/theme/app_colors.dart';
+import 'package:alpaca_mobile/core/theme/app_theme.dart';
 import 'package:alpaca_mobile/models/product_model.dart';
+import 'package:alpaca_mobile/services/favorites_service.dart';
 import 'package:alpaca_mobile/viewmodels/product_view_model.dart';
+import 'package:alpaca_mobile/viewmodels/location_view_model.dart';
 
-/// Screen showing detailed information about a single product.
-///
-/// Features:
-/// - Full product image
-/// - Product name, description, price
-/// - Owner/business info
-/// - Location link
-/// - Back button
-class ProductDetailScreen extends StatelessWidget {
-  /// Creates a [ProductDetailScreen] for the given [productId].
-  const ProductDetailScreen({
-    super.key,
-    required this.productId,
-  });
+class ProductDetailScreen extends StatefulWidget {
+  const ProductDetailScreen({super.key, required this.productId});
 
-  /// The ID of the product to display.
   final String productId;
 
-  String _formatPrice(double price) {
-    final formatted = price.toStringAsFixed(0).replaceAllMapped(
-          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-          (match) => '${match[1]}.',
-        );
-    return 'Rp $formatted';
+  @override
+  State<ProductDetailScreen> createState() => _ProductDetailScreenState();
+}
+
+class _ProductDetailScreenState extends State<ProductDetailScreen> {
+  final FavoritesService _favoritesService = FavoritesService();
+  String? _businessName;
+  String? _currentOwnerId;
+  bool _isFavorite = false;
+  bool _isFavoriteLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<ProductViewModel>().loadProductById(widget.productId);
+      _loadFavoriteStatus();
+    });
   }
 
-  String _categoryLabel(String category) {
-    switch (category) {
-      case 'food':
-        return 'Makanan';
-      case 'beverage':
-        return 'Minuman';
-      case 'handicraft':
-        return 'Kerajinan';
-      case 'agriculture':
-        return 'Pertanian';
-      default:
-        return 'Lainnya';
+  Future<void> _loadFavoriteStatus() async {
+    final isFav =
+        await _favoritesService.isFavoriteItem(widget.productId, 'product');
+    if (!mounted) return;
+    setState(() => _isFavorite = isFav);
+  }
+
+  Future<void> _toggleFavorite() async {
+    if (_isFavoriteLoading) return;
+    setState(() => _isFavoriteLoading = true);
+
+    final result = await _favoritesService.toggleFavoriteItem(
+        widget.productId, 'product');
+    if (!mounted) return;
+
+    result.when(
+      success: (isFav) => setState(() {
+        _isFavorite = isFav;
+        _isFavoriteLoading = false;
+      }),
+      failure: (e) {
+        setState(() => _isFavoriteLoading = false);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.message)));
+      },
+    );
+  }
+
+  Future<void> _loadBusinessName(String ownerId) async {
+    if (_currentOwnerId != ownerId) {
+      setState(() {
+        _businessName = null;
+        _currentOwnerId = ownerId;
+      });
+    }
+    final name =
+        await context.read<LocationViewModel>().getBusinessNameByOwner(ownerId);
+    if (mounted && _currentOwnerId == ownerId) {
+      setState(() => _businessName = name);
+    }
+  }
+
+  Future<void> _openWhatsApp(String? phone) async {
+    final number = (phone ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+    if (number.isEmpty) return;
+    final wa = '62${number.startsWith('0') ? number.substring(1) : number}';
+    final uri = Uri.parse('https://wa.me/$wa');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final productVm = context.watch<ProductViewModel>();
-    final product = productVm.allProducts
-        .where((p) => p.id == productId)
-        .firstOrNull;
+    final product = productVm.selectedProduct;
+
+    if (product != null && _businessName == null) {
+      _loadBusinessName(product.ownerId);
+    }
 
     if (product == null) {
-      return Scaffold(
-        appBar: AppBar(
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => context.pop(),
-          ),
-        ),
+      return const Scaffold(
+        backgroundColor: AppColors.bg,
         body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.shopping_bag_outlined,
-                size: 64,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Produk tidak ditemukan',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: () => context.pop(),
-                child: const Text('Kembali'),
-              ),
-            ],
-          ),
+          child: CircularProgressIndicator(
+              strokeWidth: 2, color: AppColors.primary),
         ),
       );
     }
 
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          // Image app bar
-          SliverAppBar(
-            expandedHeight: 300,
-            pinned: true,
-            leading: IconButton(
-              icon: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.4),
-                  shape: BoxShape.circle,
+      backgroundColor: AppColors.bg,
+      body: Stack(
+        children: [
+          // ── Scrollable content ─────────────────────────────────────────
+          CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              _buildAppBar(product),
+              SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildProductHeader(product),
+                    _buildSectionDivider(),
+                    if (product.description != null &&
+                        product.description!.isNotEmpty) ...[
+                      _buildDescription(product),
+                      _buildSectionDivider(),
+                    ],
+                    _buildStockSection(product),
+                    _buildSectionDivider(),
+                    _buildStoreCard(product),
+                    const SizedBox(height: 100), // bottom CTA spacing
+                  ],
                 ),
-                child: const Icon(Icons.arrow_back, color: Colors.white),
               ),
-              onPressed: () => context.pop(),
+            ],
+          ),
+
+          // ── Sticky bottom CTA ──────────────────────────────────────────
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: _buildBottomCTA(product),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── App bar with hero image ──────────────────────────────────────────────
+
+  Widget _buildAppBar(ProductModel product) {
+    return SliverAppBar(
+      expandedHeight: 300,
+      pinned: true,
+      backgroundColor: AppColors.primaryDark,
+      elevation: 0,
+      leading: Padding(
+        padding: const EdgeInsets.all(8),
+        child: _CircleButton(
+          icon: Icons.arrow_back_rounded,
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      actions: [
+        Padding(
+          padding: const EdgeInsets.all(8),
+          child: _CircleButton(
+            icon: _isFavoriteLoading
+                ? null
+                : _isFavorite
+                    ? Icons.favorite_rounded
+                    : Icons.favorite_border_rounded,
+            iconColor: _isFavorite ? AppColors.error : AppColors.textPrimary,
+            isLoading: _isFavoriteLoading,
+            onPressed: _toggleFavorite,
+          ),
+        ),
+      ],
+      flexibleSpace: FlexibleSpaceBar(
+        background: Hero(
+          tag: 'product_${product.id}',
+          child: product.imageUrl != null && product.imageUrl!.isNotEmpty
+              ? Image.network(
+                  product.imageUrl!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (ctx, err, stack) => _buildImagePlaceholder(),
+                )
+              : _buildImagePlaceholder(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImagePlaceholder() {
+    return Container(
+      color: AppColors.surfaceMuted,
+      child: const Center(
+        child: Icon(Icons.image_outlined, size: 72, color: AppColors.textTertiary),
+      ),
+    );
+  }
+
+  // ─── Product header ───────────────────────────────────────────────────────
+
+  Widget _buildProductHeader(ProductModel product) {
+    return Container(
+      color: AppColors.surface,
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Category pill
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.successLight,
+              borderRadius: BorderRadius.circular(AppRadius.pill),
+              border: Border.all(
+                  color: AppColors.primary.withValues(alpha: 0.2)),
             ),
-            flexibleSpace: FlexibleSpaceBar(
-              background: _buildProductImage(product),
+            child: Text(
+              ProductModel.categoryLabel(product.category),
+              style: AppText.label(color: AppColors.primary),
             ),
           ),
 
-          // Product details
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: AppSpacing.md),
+
+          // Product name
+          Text(
+            product.productName,
+            style: AppText.display(size: 26, height: 1.2),
+          ),
+
+          const SizedBox(height: AppSpacing.md),
+
+          // Price row
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                formatRupiah(product.price),
+                style: AppText.price(size: 28),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '/ ${product.unit}',
+                style: AppText.ui(size: 14, color: AppColors.textSecondary),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Description ──────────────────────────────────────────────────────────
+
+  Widget _buildDescription(ProductModel product) {
+    return Container(
+      color: AppColors.surface,
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      width: double.infinity,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Deskripsi Produk', style: AppText.sectionHeader()),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            product.description!,
+            style: AppText.ui(
+                size: 14, color: AppColors.textSecondary, height: 1.7),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Stock info ───────────────────────────────────────────────────────────
+
+  Widget _buildStockSection(ProductModel product) {
+    final isLow = product.isLowStock;
+    return Container(
+      color: AppColors.surface,
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: isLow ? AppColors.errorLight : AppColors.successLight,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            child: Icon(
+              isLow
+                  ? Icons.warning_amber_rounded
+                  : Icons.check_circle_outline_rounded,
+              color: isLow ? AppColors.error : AppColors.success,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isLow ? 'Stok Terbatas' : 'Stok Tersedia',
+                style: AppText.ui(
+                  size: 14,
+                  weight: FontWeight.w700,
+                  color: isLow ? AppColors.error : AppColors.success,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '${product.quantity} ${product.unit} tersisa',
+                style: AppText.ui(size: 13, color: AppColors.textSecondary),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Store card ───────────────────────────────────────────────────────────
+
+  Widget _buildStoreCard(ProductModel product) {
+    return Container(
+      color: AppColors.surface,
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Penjual', style: AppText.sectionHeader()),
+          const SizedBox(height: AppSpacing.md),
+          GestureDetector(
+            onTap: () => context.push(RouteNames.storeProfile(product.ownerId)),
+            child: Container(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              decoration: BoxDecoration(
+                color: AppColors.bg,
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(
                 children: [
-                  // Category chip
-                  Chip(
-                    label: Text(_categoryLabel(product.category)),
-                    avatar: const Icon(Icons.category_outlined, size: 16),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Product name
-                  Text(
-                    product.productName,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-
-                  // Price
-                  Text(
-                    _formatPrice(product.price),
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                  const SizedBox(height: 4),
-
-                  // Availability
-                  Row(
-                    children: [
-                      Icon(
-                        product.isAvailable
-                            ? Icons.check_circle_outline
-                            : Icons.cancel_outlined,
-                        size: 16,
-                        color: product.isAvailable
-                            ? AppColors.success
-                            : AppColors.error,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        product.isAvailable ? 'Tersedia' : 'Tidak Tersedia',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: product.isAvailable
-                                  ? AppColors.success
-                                  : AppColors.error,
-                              fontWeight: FontWeight.w600,
-                            ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Description
-                  if (product.description != null &&
-                      product.description!.isNotEmpty) ...[
-                    Text(
-                      'Deskripsi',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceMuted,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      product.description!,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            height: 1.5,
-                          ),
+                    child: const Icon(
+                      Icons.storefront_outlined,
+                      size: 22,
+                      color: AppColors.textSecondary,
                     ),
-                    const SizedBox(height: 20),
-                  ],
-
-                  // Owner/Business info
-                  const Divider(),
-                  const SizedBox(height: 12),
-                  _buildOwnerSection(context, product),
-                  const SizedBox(height: 16),
-
-                  // Location link
-                  OutlinedButton.icon(
-                    onPressed: () => context.push(RouteNames.showcaseMap),
-                    icon: const Icon(Icons.map_outlined),
-                    label: const Text('Lihat di Peta'),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _businessName ?? 'Memuat...',
+                          style: AppText.ui(
+                              size: 14, weight: FontWeight.w600),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Lihat profil toko',
+                          style: AppText.label(color: AppColors.primary),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    size: 14,
+                    color: AppColors.textTertiary,
                   ),
                 ],
               ),
@@ -217,64 +403,118 @@ class ProductDetailScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildProductImage(ProductModel product) {
-    if (product.imageUrl != null && product.imageUrl!.isNotEmpty) {
-      return Image.network(
-        product.imageUrl!,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        errorBuilder: (context, error, stackTrace) => _buildImagePlaceholder(),
-      );
-    }
-    return _buildImagePlaceholder();
-  }
+  // ─── Bottom CTA ───────────────────────────────────────────────────────────
 
-  Widget _buildImagePlaceholder() {
+  Widget _buildBottomCTA(ProductModel product) {
     return Container(
-      color: AppColors.surfaceVariant,
-      child: const Center(
-        child: Icon(
-          Icons.image_outlined,
-          size: 80,
-          color: AppColors.onSurfaceVariant,
-        ),
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.md,
+        AppSpacing.lg,
+        AppSpacing.lg + MediaQuery.of(context).padding.bottom,
+      ),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
+      child: Row(
+        children: [
+          // Favorite icon button
+          GestureDetector(
+            onTap: _toggleFavorite,
+            child: Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: AppColors.bg,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Icon(
+                _isFavorite
+                    ? Icons.favorite_rounded
+                    : Icons.favorite_border_rounded,
+                size: 22,
+                color:
+                    _isFavorite ? AppColors.error : AppColors.textSecondary,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          // WhatsApp CTA
+          Expanded(
+            child: SizedBox(
+              height: 52,
+              child: FilledButton.icon(
+                onPressed: () => _openWhatsApp(null),
+                icon: const Icon(Icons.chat_rounded, size: 18),
+                label: Text(
+                  'Hubungi via WhatsApp',
+                  style: AppText.ui(
+                    size: 14,
+                    weight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF25D366),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildOwnerSection(BuildContext context, ProductModel product) {
-    return Row(
-      children: [
-        CircleAvatar(
-          radius: 20,
-          backgroundColor: AppColors.secondaryContainer,
-          child: const Icon(
-            Icons.store_outlined,
-            size: 20,
-            color: AppColors.secondary,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Penjual',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+  Widget _buildSectionDivider() {
+    return Container(height: 8, color: AppColors.bg);
+  }
+}
+
+// ─── Circle action button ─────────────────────────────────────────────────────
+
+class _CircleButton extends StatelessWidget {
+  final IconData? icon;
+  final Color? iconColor;
+  final VoidCallback? onPressed;
+  final bool isLoading;
+
+  const _CircleButton({
+    this.icon,
+    this.iconColor,
+    this.onPressed,
+    this.isLoading = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        shape: BoxShape.circle,
+        boxShadow: AppShadows.card(),
+      ),
+      child: isLoading
+          ? const Center(
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: AppColors.primary),
               ),
-              Text(
-                'UMKM Lokal',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-              ),
-            ],
-          ),
-        ),
-      ],
+            )
+          : IconButton(
+              padding: EdgeInsets.zero,
+              icon: Icon(icon, size: 18,
+                  color: iconColor ?? AppColors.textPrimary),
+              onPressed: onPressed,
+            ),
     );
   }
 }

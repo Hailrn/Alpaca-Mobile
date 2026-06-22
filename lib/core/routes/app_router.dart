@@ -4,11 +4,14 @@ import 'package:provider/provider.dart';
 import 'package:alpaca_mobile/core/routes/route_names.dart';
 import 'package:alpaca_mobile/core/routes/route_guard.dart';
 import 'package:alpaca_mobile/viewmodels/auth_view_model.dart';
+import 'package:alpaca_mobile/viewmodels/location_view_model.dart';
 
 // Screen imports
 import 'package:alpaca_mobile/views/splash_screen.dart';
 import 'package:alpaca_mobile/views/auth/login_screen.dart';
 import 'package:alpaca_mobile/views/auth/register_screen.dart';
+import 'package:alpaca_mobile/views/auth/business_onboarding_screen.dart';
+import 'package:alpaca_mobile/views/owner/owner_main_screen.dart';
 import 'package:alpaca_mobile/views/owner/owner_dashboard_screen.dart';
 import 'package:alpaca_mobile/views/owner/inventory_screen.dart';
 import 'package:alpaca_mobile/views/owner/bookkeeping_screen.dart';
@@ -18,8 +21,11 @@ import 'package:alpaca_mobile/views/owner/products_screen.dart';
 import 'package:alpaca_mobile/views/owner/waste_tracking_screen.dart';
 import 'package:alpaca_mobile/views/owner/profile_screen.dart';
 import 'package:alpaca_mobile/views/showcase/public_showcase_screen.dart';
+import 'package:alpaca_mobile/views/showcase/customer_main_screen.dart';
+import 'package:alpaca_mobile/views/showcase/customer_profile_screen.dart';
 import 'package:alpaca_mobile/views/showcase/product_detail_screen.dart';
-import 'package:alpaca_mobile/views/showcase/business_map_screen.dart';
+import 'package:alpaca_mobile/views/showcase/store_profile_screen.dart';
+import 'package:alpaca_mobile/views/profile/edit_profile_screen.dart';
 
 /// Application router configuration using go_router.
 ///
@@ -37,16 +43,18 @@ class AppRouter {
   /// provider tree for redirect logic.
   static GoRouter router(BuildContext context) {
     final authViewModel = context.read<AuthViewModel>();
+    final locationViewModel = context.read<LocationViewModel>();
 
     return GoRouter(
       navigatorKey: _rootNavigatorKey,
       initialLocation: RouteNames.splash,
-      debugLogDiagnostics: true,
+      debugLogDiagnostics: false,
       redirect: (BuildContext context, GoRouterState state) {
         final location = state.matchedLocation;
         return RouteGuard.redirect(
           location: location,
           authViewModel: authViewModel,
+          locationViewModel: locationViewModel,
         );
       },
       routes: _routes,
@@ -58,17 +66,18 @@ class AppRouter {
   ///
   /// Use this factory when you need the router to reactively redirect
   /// on authentication state changes.
-  static GoRouter createRouter(AuthViewModel authViewModel) {
+  static GoRouter createRouter(AuthViewModel authViewModel, LocationViewModel locationViewModel) {
     return GoRouter(
       navigatorKey: _rootNavigatorKey,
       initialLocation: RouteNames.splash,
-      debugLogDiagnostics: true,
+      debugLogDiagnostics: false,
       refreshListenable: authViewModel,
       redirect: (BuildContext context, GoRouterState state) {
         final location = state.matchedLocation;
         return RouteGuard.redirect(
           location: location,
           authViewModel: authViewModel,
+          locationViewModel: locationViewModel,
         );
       },
       routes: _routes,
@@ -96,12 +105,17 @@ class AppRouter {
       name: 'register',
       builder: (context, state) => const RegisterScreen(),
     ),
+    GoRoute(
+      path: RouteNames.businessOnboarding,
+      name: 'businessOnboarding',
+      builder: (context, state) => const BusinessOnboardingScreen(),
+    ),
 
     // Owner routes
     GoRoute(
       path: RouteNames.ownerDashboard,
       name: 'ownerDashboard',
-      builder: (context, state) => const OwnerDashboardScreen(),
+      builder: (context, state) => const OwnerMainScreen(initialIndex: 0),
     ),
     GoRoute(
       path: RouteNames.ownerInventory,
@@ -111,7 +125,7 @@ class AppRouter {
     GoRoute(
       path: RouteNames.ownerBookkeeping,
       name: 'ownerBookkeeping',
-      builder: (context, state) => const BookkeepingScreen(),
+      builder: (context, state) => const OwnerMainScreen(initialIndex: 2),
     ),
     GoRoute(
       path: RouteNames.ownerMedia,
@@ -126,12 +140,12 @@ class AppRouter {
     GoRoute(
       path: RouteNames.ownerProducts,
       name: 'ownerProducts',
-      builder: (context, state) => const ProductsScreen(),
+      builder: (context, state) => const OwnerMainScreen(initialIndex: 1),
     ),
     GoRoute(
       path: RouteNames.ownerWaste,
       name: 'ownerWaste',
-      builder: (context, state) => const WasteTrackingScreen(),
+      builder: (context, state) => const OwnerMainScreen(initialIndex: 3),
     ),
     GoRoute(
       path: RouteNames.ownerProfile,
@@ -143,10 +157,10 @@ class AppRouter {
     GoRoute(
       path: RouteNames.showcase,
       name: 'showcase',
-      builder: (context, state) => const PublicShowcaseScreen(),
+      builder: (context, state) => const CustomerMainScreen(initialIndex: 0),
     ),
     GoRoute(
-      path: RouteNames.showcaseProductDetail,
+      path: RouteNames.showcaseProductDetail, // /showcase/product/:id
       name: 'productDetail',
       builder: (context, state) {
         final productId = state.pathParameters['id']!;
@@ -154,9 +168,32 @@ class AppRouter {
       },
     ),
     GoRoute(
-      path: RouteNames.showcaseMap,
-      name: 'businessMap',
-      builder: (context, state) => const BusinessMapScreen(),
+      path: '/showcase/products', // Ganti ke plural untuk avoid conflict
+      name: 'productsList',
+      builder: (context, state) => const CustomerMainScreen(initialIndex: 0),
+    ),
+    GoRoute(
+      path: RouteNames.showcaseNearby,
+      name: 'nearbyStores',
+      builder: (context, state) => const CustomerMainScreen(initialIndex: 1),
+    ),
+    GoRoute(
+      path: RouteNames.showcaseStoreProfile,
+      name: 'storeProfile',
+      builder: (context, state) {
+        final ownerId = state.pathParameters['ownerId']!;
+        return StoreProfileScreen(ownerId: ownerId);
+      },
+    ),
+    GoRoute(
+      path: RouteNames.profileEdit,
+      name: 'profileEdit',
+      builder: (context, state) => const EditProfileScreen(),
+    ),
+    GoRoute(
+      path: RouteNames.customerProfile,
+      name: 'customerProfile',
+      builder: (context, state) => const CustomerProfileScreen(),
     ),
   ];
 }

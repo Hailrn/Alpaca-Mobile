@@ -1,116 +1,104 @@
-/// Business location repository for the ALPACA application.
-///
-/// Provides CRUD operations and real-time streaming for business locations,
-/// supporting the local culinary tourism map feature.
-library;
-
-import 'dart:async';
-
-import 'package:alpaca_mobile/core/constants/firebase_constants.dart';
+import 'package:alpaca_mobile/core/network/api_client.dart';
 import 'package:alpaca_mobile/core/utils/result.dart';
-import 'package:alpaca_mobile/firebase/firestore_service.dart';
 import 'package:alpaca_mobile/models/business_location_model.dart';
+import 'package:alpaca_mobile/core/exceptions/app_exception.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Repository handling business location operations.
-///
-/// Manages geographic business data for the tourism map and
-/// business profile features.
 class BusinessRepository {
-  /// Creates a [BusinessRepository] with the required Firestore service.
-  BusinessRepository({
-    required FirestoreService firestoreService,
-  }) : _firestoreService = firestoreService;
+  BusinessRepository({required ApiClient apiClient}) : _api = apiClient;
+  final ApiClient _api;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  final FirestoreService _firestoreService;
+  Future<Result<List<BusinessLocationModel>>> getBusinessLocations() =>
+      _api.getPublic('/business-locations', (j) {
+        final data = j is Map ? j['data'] : j;
+        return (data as List).map((e) => BusinessLocationModel.fromJson(e as Map<String, dynamic>)).toList();
+      });
 
-  /// Creates a new business location in Firestore.
-  ///
-  /// Returns the document ID of the created business location.
-  Future<Result<String>> createBusiness(BusinessLocationModel business) async {
-    return _firestoreService.addDocument(
-      collection: FirebaseCollections.businessLocations,
-      data: business.toJson(),
-      id: business.id.isNotEmpty ? business.id : null,
-    );
+  Future<Result<BusinessLocationModel>> getBusinessLocation(String id) =>
+      _api.getPublic('/business-locations/$id', (j) {
+        final data = j is Map ? j['data'] : j;
+        return BusinessLocationModel.fromJson(data as Map<String, dynamic>);
+      });
+
+  Future<Result<BusinessLocationModel>> createBusinessLocation(BusinessLocationModel location) async {
+    try {
+      return await _api.post('/business-locations/create', location.toJson(), (j) {
+        final data = j is Map ? j['data'] : j;
+        return BusinessLocationModel.fromJson(data as Map<String, dynamic>);
+      });
+    } catch (e) {
+      return Result.failure(AppException(message: 'Failed to create: $e'));
+    }
   }
 
-  /// Updates an existing business location.
-  ///
-  /// The [business] must have a valid [BusinessLocationModel.id].
-  Future<Result<void>> updateBusiness(BusinessLocationModel business) async {
-    return _firestoreService.updateDocument(
-      collection: FirebaseCollections.businessLocations,
-      id: business.id,
-      data: business.toJson(),
-    );
+  Future<Result<BusinessLocationModel>> updateBusinessLocation(String id, Map<String, dynamic> data) async {
+    try {
+      return await _api.put('/business-locations/$id', data, (j) {
+        final data = j is Map ? j['data'] : j;
+        return BusinessLocationModel.fromJson(data as Map<String, dynamic>);
+      });
+    } catch (e) {
+      return Result.failure(AppException(message: 'Failed to update: $e'));
+    }
   }
 
-  /// Retrieves a single business location by its [id].
-  Future<Result<BusinessLocationModel>> getBusiness(String id) async {
-    return _firestoreService.getDocument<BusinessLocationModel>(
-      collection: FirebaseCollections.businessLocations,
-      id: id,
-      fromFirestore: (data, docId) =>
-          BusinessLocationModel.fromJson({...data, 'id': docId}),
-    );
-  }
+  Future<Result<void>> deleteBusinessLocation(String id) => _api.delete('/business-locations/$id');
 
-  /// Retrieves the business location owned by a specific [ownerId].
+  /// Fetches nearby business locations by GPS coordinates.
   ///
-  /// Returns null if the owner has no registered business location.
-  Future<Result<BusinessLocationModel?>> getBusinessByOwner(
-    String ownerId,
-  ) async {
-    final result =
-        await _firestoreService.getCollection<BusinessLocationModel>(
-      collection: FirebaseCollections.businessLocations,
-      fromFirestore: (data, docId) =>
-          BusinessLocationModel.fromJson({...data, 'id': docId}),
-      queryParams: QueryParams(
-        where: [
-          WhereCondition(
-            field: 'ownerId',
-            operator: WhereOperator.isEqualTo,
-            value: ownerId,
-          ),
-        ],
-        limit: 1,
-      ),
-    );
+  /// Calls `GET /business-locations/nearby?latitude=&longitude=` and returns
+  /// the list of [BusinessLocationModel] sorted by proximity.
+  Future<Result<List<BusinessLocationModel>>> getNearbyBusinesses({
+    required double latitude,
+    required double longitude,
+  }) =>
+      _api.getPublic(
+        '/business-locations/nearby',
+        (j) {
+          final data = j is Map ? j['data'] : j;
+          return (data as List)
+              .map((e) => BusinessLocationModel.fromJson(e as Map<String, dynamic>))
+              .toList();
+        },
+        query: {
+          'latitude': latitude.toString(),
+          'longitude': longitude.toString(),
+        },
+      );
 
-    return result.when(
-      success: (businesses) {
-        if (businesses.isEmpty) {
-          return Result<BusinessLocationModel?>.success(null);
-        }
-        return Result<BusinessLocationModel?>.success(businesses.first);
-      },
-      failure: (exception) => Result.failure(exception),
-    );
-  }
-
-  /// Streams all business locations in real-time.
-  ///
-  /// Used for the public tourism map to display all registered businesses.
+  /// Get all businesses - prioritizes API but falls back to Firestore stream
   Stream<List<BusinessLocationModel>> getAllBusinesses() {
-    return _firestoreService
-        .streamCollection<BusinessLocationModel>(
-          collection: FirebaseCollections.businessLocations,
-          fromFirestore: (data, docId) =>
-              BusinessLocationModel.fromJson({...data, 'id': docId}),
-          queryParams: const QueryParams(
-            orderBy: 'createdAt',
-            descending: true,
-          ),
-        )
-        .map((result) => result.dataOrNull ?? []);
+    return _firestore.collection('business_locations')
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map((doc) {
+              final data = doc.data();
+              data['id'] = doc.id;
+              return BusinessLocationModel.fromJson(data);
+            })
+            .toList());
   }
 
-  /// Deletes a business location by its [id].
-  Future<Result<void>> deleteBusiness(String id) async {
-    return _firestoreService.deleteDocument(
-      collection: FirebaseCollections.businessLocations,
-      id: id,
-    );
+  /// Get business by owner - uses API
+  Future<Result<BusinessLocationModel?>> getBusinessByOwner(String ownerId) async {
+    try {
+      final result = await _api.getPublic('/business-locations', (j) {
+        final data = j is Map ? j['data'] : j;
+        final locations = (data as List)
+            .map((e) => BusinessLocationModel.fromJson(e as Map<String, dynamic>))
+            .where((loc) => loc.ownerId == ownerId)
+            .toList();
+        return locations.isNotEmpty ? locations.first : null;
+      });
+      
+      return result;
+    } catch (e) {
+      return Result.failure(AppException(message: 'Failed to get business: $e'));
+    }
   }
+  
+  // Aliases untuk backward compatibility
+  Future<Result<BusinessLocationModel>> createBusiness(BusinessLocationModel location) => createBusinessLocation(location);
+  Future<Result<BusinessLocationModel>> updateBusiness(BusinessLocationModel location) => updateBusinessLocation(location.id, location.toJson());
 }

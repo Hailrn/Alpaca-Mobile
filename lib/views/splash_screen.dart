@@ -1,17 +1,17 @@
-/// SplashScreen - Entry point of the ALPACA app.
-///
-/// Displays the app logo, subtitle, and a loading indicator.
-/// Navigation is handled by GoRouter's redirect logic in RouteGuard.
-/// Once AuthViewModel resolves auth state, the router automatically
-/// redirects to the appropriate screen.
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 
+import 'package:alpaca_mobile/core/routes/route_names.dart';
 import 'package:alpaca_mobile/viewmodels/auth_view_model.dart';
+import 'package:alpaca_mobile/viewmodels/location_view_model.dart';
+import 'package:alpaca_mobile/models/user_model.dart';
+import 'package:alpaca_mobile/core/theme/app_colors.dart';
 
-/// Splash screen shown on app launch.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -20,112 +20,236 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _animationController;
-  late final Animation<double> _fadeAnimation;
+    with TickerProviderStateMixin {
+  late final AnimationController _wordmarkCtrl;
+  late final Animation<double> _wordmarkFade;
+  late final Animation<Offset> _wordmarkSlide;
+
+  late final AnimationController _taglineCtrl;
+  late final Animation<double> _taglineFade;
+
+  late final AnimationController _dotCtrl;
 
   @override
   void initState() {
     super.initState();
 
-    _animationController = AnimationController(
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ));
+
+    _wordmarkCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _wordmarkFade = CurvedAnimation(parent: _wordmarkCtrl, curve: Curves.easeOut);
+    _wordmarkSlide = Tween<Offset>(
+      begin: const Offset(0, 0.18),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _wordmarkCtrl, curve: Curves.easeOutCubic));
+
+    _taglineCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    _taglineFade = CurvedAnimation(parent: _taglineCtrl, curve: Curves.easeIn);
+
+    _dotCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
-    );
+    )..repeat();
 
-    _fadeAnimation = CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeIn,
-    );
-
-    _animationController.forward();
-
-    // Trigger auth check — once resolved, GoRouter redirect will navigate.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AuthViewModel>().checkAuthStatus();
+    _wordmarkCtrl.forward();
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) _taglineCtrl.forward();
     });
+
+    // Auth resolution
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final authVm = context.read<AuthViewModel>();
+      final minimumSplashDuration = Future.delayed(const Duration(milliseconds: 2500));
+
+      if (authVm.hasFirebaseSession) {
+        authVm.checkAuthStatus();
+        
+        await Future.wait([
+          authVm.waitForAuthResolution(),
+          minimumSplashDuration,
+        ]);
+        
+        if (!mounted) return;
+        await _navigateBasedOnAuth(authVm);
+      } else {
+        
+        await Future.wait([
+          authVm.checkAuthStatus(),
+          minimumSplashDuration,
+        ]);
+        
+        if (!mounted) return;
+        if (authVm.isAuthenticated) {
+          await _navigateBasedOnAuth(authVm);
+        } else {
+          context.go(RouteNames.login);
+        }
+      }
+    });
+  }
+
+  Future<void> _navigateBasedOnAuth(AuthViewModel authVm) async {
+    if (authVm.userRole == UserRole.ownerUmkm) {
+      final userId = authVm.currentUser?.id;
+      if (userId != null) {
+        await context.read<LocationViewModel>().getCurrentLocation(userId);
+      }
+      if (!mounted) return;
+      final hasLocation =
+          context.read<LocationViewModel>().businessLocation != null;
+      context.go(
+          hasLocation ? RouteNames.ownerDashboard : RouteNames.businessOnboarding);
+    } else {
+      context.go(RouteNames.showcase);
+    }
   }
 
   @override
   void dispose() {
-    _animationController.dispose();
+    _wordmarkCtrl.dispose();
+    _taglineCtrl.dispose();
+    _dotCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF2E7D32), // Dark green
-              Color(0xFF4CAF50), // Medium green
-              Color(0xFF81C784), // Light green
-            ],
+      backgroundColor: AppColors.primaryDark,
+      body: Stack(
+        children: [
+          Positioned(
+            top: -80,
+            right: -60,
+            child: Container(
+              width: 280,
+              height: 280,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.primary.withValues(alpha: 0.35),
+              ),
+            ),
           ),
-        ),
-        child: FadeTransition(
-          opacity: _fadeAnimation,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // App logo icon
-              Container(
-                width: 120,
-                height: 120,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.eco_rounded,
-                  size: 64,
-                  color: Colors.white,
-                ),
+          Positioned(
+            bottom: -120,
+            left: -80,
+            child: Container(
+              width: 320,
+              height: 320,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.primaryLight.withValues(alpha: 0.12),
               ),
-              const SizedBox(height: 32),
-
-              // App name
-              const Text(
-                'ALPACA',
-                style: TextStyle(
-                  fontSize: 48,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  letterSpacing: 8,
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // Subtitle
-              const Text(
-                'Digitalisasi UMKM Agraris',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.white70,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              const SizedBox(height: 64),
-
-              // Loading indicator
-              const SizedBox(
-                width: 32,
-                height: 32,
-                child: CircularProgressIndicator(
-                  strokeWidth: 3,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+          SafeArea(
+            child: SizedBox(
+              width: double.infinity,
+              child: Column(
+                children: [
+                  const Spacer(flex: 3),
+                  FadeTransition(
+                    opacity: _wordmarkFade,
+                    child: SlideTransition(
+                      position: _wordmarkSlide,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ClipOval(
+                            child: Center(
+                              child: Image.asset(
+                                'assets/icons/alpaca_icons_clear.png',
+                                width: 128,
+                                height: 128,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            'ALPACA',
+                            style: GoogleFonts.dmSerifDisplay(
+                              fontSize: 52,
+                              color: Colors.white,
+                              letterSpacing: 6,
+                              height: 1.0,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  FadeTransition(
+                    opacity: _taglineFade,
+                    child: Text(
+                      'Platform UMKM Agraris Indonesia',
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        color: Colors.white.withValues(alpha: 0.50),
+                        fontWeight: FontWeight.w400,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                  const Spacer(flex: 3),
+                  FadeTransition(
+                    opacity: _taglineFade,
+                    child: _LoadingDots(controller: _dotCtrl),
+                  ),
+                  const SizedBox(height: 56),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
+    );
+  }
+}
+
+class _LoadingDots extends StatelessWidget {
+  final AnimationController controller;
+
+  const _LoadingDots({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (_, __) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (i) {
+            final delay = i / 3.0;
+            final value = ((controller.value - delay) % 1.0).clamp(0.0, 1.0);
+            final opacity = (value < 0.5)
+                ? (value * 2).clamp(0.2, 1.0)
+                : ((1.0 - value) * 2).clamp(0.2, 1.0);
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Opacity(
+                opacity: opacity,
+                child: Container(
+                  width: 5,
+                  height: 5,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            );
+          }),
+        );
+      },
     );
   }
 }

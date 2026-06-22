@@ -11,21 +11,20 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
-import 'package:alpaca_mobile/core/theme/app_colors.dart';
+import 'package:alpaca_mobile/core/theme/app_theme.dart';
 import 'package:alpaca_mobile/models/product_model.dart';
 import 'package:alpaca_mobile/viewmodels/auth_view_model.dart';
 import 'package:alpaca_mobile/viewmodels/product_view_model.dart';
+import 'package:alpaca_mobile/repositories/media_repository.dart';
+import 'package:google_fonts/google_fonts.dart';
 
-/// Screen for managing the product catalog of a business owner.
-///
-/// Features:
-/// - Grid/list of products with image, name, price
-/// - FAB to add new product
-/// - Each product card shows: image, name, price, availability badge
-/// - Tap to edit product
-/// - Add/Edit form: name, description, price, category, image upload, availability toggle
+/// Fitur:
+/// - Grid produk
+/// - Tambah produk baru
+/// - Detail card produk
+/// - Edit produk
+/// - Form tambah/edit produk
 class ProductsScreen extends StatefulWidget {
-  /// Creates a [ProductsScreen].
   const ProductsScreen({super.key});
 
   @override
@@ -61,15 +60,49 @@ class _ProductsScreenState extends State<ProductsScreen> {
         product: product,
         onSave: (savedProduct) async {
           final productVm = context.read<ProductViewModel>();
+          final authVm = context.read<AuthViewModel>();
           if (product != null) {
             await productVm.updateProduct(savedProduct);
           } else {
             await productVm.addProduct(savedProduct);
           }
+          // Reload products after create/update
+          if (authVm.currentUser?.id != null) {
+            await productVm.loadProducts(authVm.currentUser!.id);
+          }
           if (mounted) Navigator.pop(context);
         },
       ),
     );
+  }
+
+  Future<void> _confirmDelete(ProductModel product) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hapus Produk'),
+        content: Text(
+          'Apakah Anda yakin ingin menghapus "${product.productName}"?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.error,
+            ),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await context.read<ProductViewModel>().deleteProduct(product.id);
+    }
   }
 
   String _formatPrice(double price) {
@@ -85,33 +118,230 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final productVm = context.watch<ProductViewModel>();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Produk'),
-        actions: [
-          if (productVm.products.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Center(
-                child: Text(
-                  '${productVm.products.length} produk',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-            ),
+      backgroundColor: AppColors.bg,
+      body: Column(
+        children: [
+          _buildHeader(productVm),
+          _buildStatsRow(productVm),
+          Expanded(child: _buildBody(productVm)),
         ],
       ),
-      body: _buildBody(productVm),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
         onPressed: () => _openProductForm(),
-        icon: const Icon(Icons.add),
-        label: const Text('Tambah Produk'),
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: const Icon(Icons.add_rounded),
+      ),
+    );
+  }
+
+  Widget _buildHeader(ProductViewModel productVm) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppColors.primaryDark, AppColors.primary],
+        ),
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(24),
+          bottomRight: Radius.circular(24),
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.inventory_2_outlined,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Produk',
+                      style: GoogleFonts.dmSerifDisplay(
+                        fontSize: 20,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      'Kelola produk Anda',
+                      style: AppText.ui(
+                        size: 13,
+                        color: Colors.white.withValues(alpha: 0.70),
+                        weight: FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (productVm.products.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${productVm.products.length} produk',
+                    style: AppText.ui(
+                      size: 13,
+                      color: Colors.white,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatsRow(ProductViewModel productVm) {
+    final totalProducts = productVm.products.length;
+    final availableProducts = productVm.products.where((p) => p.isAvailable).length;
+    final lowStockProducts = productVm.products.where((p) => p.isLowStock).length;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    '$totalProducts',
+                    style: AppText.ui(
+                      size: 20,
+                      weight: FontWeight.w800,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Total Produk',
+                    style: AppText.ui(
+                      size: 11,
+                      color: AppColors.textSecondary,
+                      weight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    '$availableProducts',
+                    style: AppText.ui(
+                      size: 20,
+                      weight: FontWeight.w800,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Tersedia',
+                    style: AppText.ui(
+                      size: 11,
+                      color: AppColors.textSecondary,
+                      weight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: lowStockProducts > 0
+                    ? AppColors.warningContainer
+                    : AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: lowStockProducts > 0
+                      ? AppColors.warning.withValues(alpha: 0.2)
+                      : AppColors.border,
+                ),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    '$lowStockProducts',
+                    style: AppText.ui(
+                      size: 20,
+                      weight: FontWeight.w800,
+                      color: lowStockProducts > 0
+                          ? AppColors.warning
+                          : AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Stok Rendah',
+                    style: AppText.ui(
+                      size: 11,
+                      color: lowStockProducts > 0
+                          ? AppColors.onSecondaryContainer
+                          : AppColors.textSecondary,
+                      weight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildBody(ProductViewModel productVm) {
     if (productVm.isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: CircularProgressIndicator(
+          color: Color(0xFF22C55E),
+        ),
+      );
     }
 
     if (productVm.error != null) {
@@ -121,18 +351,41 @@ class _ProductsScreenState extends State<ProductsScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.error_outline, size: 64, color: AppColors.error),
-              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEE2E2),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Icon(
+                  Icons.error_outline_rounded,
+                  size: 56,
+                  color: Color(0xFFDC2626),
+                ),
+              ),
+              const SizedBox(height: 20),
               Text(
                 productVm.error!,
                 textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium,
+                style: const TextStyle(
+                  fontSize: 15,
+                  color: Color(0xFF1F2937),
+                  fontWeight: FontWeight.w500,
+                ),
               ),
               const SizedBox(height: 16),
-              FilledButton.icon(
+              ElevatedButton.icon(
                 onPressed: _loadProducts,
-                icon: const Icon(Icons.refresh),
+                icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Coba Lagi'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF22C55E),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
               ),
             ],
           ),
@@ -147,23 +400,36 @@ class _ProductsScreenState extends State<ProductsScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.storefront_outlined,
-                size: 80,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Icon(
+                  Icons.storefront_rounded,
+                  size: 64,
+                  color: Color(0xFF22C55E),
+                ),
               ),
-              const SizedBox(height: 16),
-              Text(
+              const SizedBox(height: 20),
+              const Text(
                 'Belum ada produk',
-                style: Theme.of(context).textTheme.titleMedium,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1F2937),
+                ),
               ),
               const SizedBox(height: 8),
-              Text(
-                'Tap tombol tambah untuk menambahkan produk pertama Anda',
+              const Text(
+                'Tap tombol + untuk menambahkan\nproduk pertama Anda',
                 textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Color(0xFF6B7280),
+                  height: 1.5,
+                ),
               ),
             ],
           ),
@@ -172,25 +438,27 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
 
     return RefreshIndicator(
+      color: const Color(0xFF22C55E),
       onRefresh: () async => _loadProducts(),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final crossAxisCount = constraints.maxWidth > 600 ? 3 : 2;
           return GridView.builder(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: crossAxisCount,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-              childAspectRatio: 0.72,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 16,
+              childAspectRatio: 0.68,
             ),
             itemCount: productVm.products.length,
             itemBuilder: (context, index) {
               final product = productVm.products[index];
-              return _ProductCard(
+              return _ProductCardWithStock(
                 product: product,
                 formattedPrice: _formatPrice(product.price),
                 onTap: () => _openProductForm(product: product),
+                onDelete: () => _confirmDelete(product),
               );
             },
           );
@@ -200,154 +468,302 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 }
 
-/// A card widget displaying product information in the grid.
-class _ProductCard extends StatelessWidget {
-  const _ProductCard({
+/// A product card + detached stock-control strip below it.
+class _ProductCardWithStock extends StatelessWidget {
+  const _ProductCardWithStock({
     required this.product,
     required this.formattedPrice,
     required this.onTap,
+    required this.onDelete,
   });
 
   final ProductModel product;
   final String formattedPrice;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
+
+  Future<void> _adjustStock(BuildContext context, int delta) async {
+    final productVm = context.read<ProductViewModel>();
+    final updatedProduct = product.copyWith(
+      quantity: (product.quantity + delta).clamp(0, 999999),
+      updatedAt: DateTime.now(),
+    );
+    await productVm.updateProduct(updatedProduct);
+    final authVm = context.read<AuthViewModel>();
+    if (authVm.currentUser?.id != null) {
+      await productVm.loadProducts(authVm.currentUser!.id);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Card(
-        margin: EdgeInsets.zero,
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Product image
-            Expanded(
-              flex: 3,
-              child: Stack(
-                fit: StackFit.expand,
+    return Column(
+      children: [
+        // ── Product card (tappable → edit) ──────────────────────────
+        Expanded(
+          child: GestureDetector(
+            onTap: onTap,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (product.imageUrl != null && product.imageUrl!.isNotEmpty)
-                    Image.network(
-                      product.imageUrl!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) =>
-                          _buildPlaceholder(),
-                    )
-                  else
-                    _buildPlaceholder(),
-                  // Availability badge
-                  Positioned(
-                    top: 6,
-                    right: 6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: product.isAvailable
-                            ? AppColors.success
-                            : AppColors.error,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        product.isAvailable ? 'Tersedia' : 'Habis',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 10,
+                  // Product image
+                  Expanded(
+                    flex: 5,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ClipRRect(
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(16)),
+                          child: product.imageUrl != null &&
+                                  product.imageUrl!.isNotEmpty
+                              ? Image.network(
+                                  product.imageUrl!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, _, _) =>
+                                      _buildPlaceholder(),
+                                )
+                              : _buildPlaceholder(),
+                        ),
+                        // Availability badge
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: product.isAvailable
+                                  ? const Color.fromARGB(125, 34, 197, 94)
+                                  : const Color.fromARGB(126, 220, 38, 94),
+                              borderRadius: BorderRadius.circular(8),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.2),
+                                  blurRadius: 4,
+                                ),
+                              ],
                             ),
+                            child: Text(
+                              product.isAvailable ? 'Tersedia' : 'Habis',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ),
+                        ),
+                        // Delete button
+                        Positioned(
+                          top: 8,
+                          left: 8,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: const Color.fromARGB(108, 220, 38, 38),
+                              borderRadius: BorderRadius.circular(10),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.2),
+                                  blurRadius: 4,
+                                ),
+                              ],
+                            ),
+                            child: IconButton(
+                              onPressed: onDelete,
+                              icon: const Icon(Icons.delete_outline_rounded,
+                                  size: 18),
+                              color: Colors.white,
+                              padding: const EdgeInsets.all(6),
+                              constraints: const BoxConstraints(
+                                  minWidth: 32, minHeight: 32),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Product info
+                  Expanded(
+                    flex: 3,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            product.productName,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF1F2937),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            formattedPrice,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Color(0xFF16A34A),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const Spacer(),
+                          // Stock badge
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: product.isLowStock
+                                  ? const Color(0xFFFEE2E2)
+                                  : const Color(0xFFF0FDF4),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  product.isLowStock
+                                      ? Icons.warning_amber_rounded
+                                      : Icons.inventory_2_rounded,
+                                  size: 11,
+                                  color: product.isLowStock
+                                      ? const Color(0xFFDC2626)
+                                      : const Color(0xFF16A34A),
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    '${product.quantity} ${product.unit}',
+                                    style: TextStyle(
+                                      height: 1.0,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: product.isLowStock
+                                          ? const Color(0xFFDC2626)
+                                          : const Color(0xFF16A34A),
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
                 ],
               ),
             ),
-            // Product info
-            Expanded(
-              flex: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      product.productName,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+          ),
+        ),
+
+        // ── Stock control strip (separate from card) ─────────────────
+        const SizedBox(height: 6),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: [
+              // Minus
+              Expanded(
+                child: GestureDetector(
+                  onTap: product.quantity > 0
+                      ? () => _adjustStock(context, -1)
+                      : null,
+                  child: Container(
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: product.quantity > 0
+                          ? const Color.fromARGB(121, 255, 255, 255)
+                          : const Color.fromARGB(255, 255, 255, 255),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      formattedPrice,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.bold,
-                          ),
+                    alignment: Alignment.center,
+                    child: Icon(
+                      Icons.remove_rounded,
+                      size: 20,
+                      color: product.quantity > 0
+                          ? const Color.fromARGB(255, 255, 0, 0)
+                          : const Color(0xFF9CA3AF),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      product.category,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                    ),
-                    const Spacer(),
-                    // Stock info
-                    Row(
-                      children: [
-                        Icon(
-                          product.isLowStock
-                              ? Icons.warning_amber_rounded
-                              : Icons.check_circle_outline,
-                          size: 12,
-                          color: product.isLowStock
-                              ? AppColors.error
-                              : AppColors.success,
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            '${product.quantity} ${product.unit}',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: product.isLowStock
-                                  ? AppColors.error
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                              fontWeight: product.isLowStock
-                                  ? FontWeight.w600
-                                  : FontWeight.normal,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ],
+              // Quantity label
+              SizedBox(
+                width: 40,
+                child: Text(
+                  '${product.quantity}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF1F2937),
+                  ),
+                ),
+              ),
+              // Plus
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => _adjustStock(context, 1),
+                  child: Container(
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: const Color.fromARGB(255, 255, 255, 255),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.add_rounded,
+                      size: 20,
+                      color: Color.fromARGB(255, 1, 138, 5),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
+      ],
     );
   }
 
   Widget _buildPlaceholder() {
     return Container(
-      color: AppColors.surfaceVariant,
+      color: const Color(0xFFF3F4F6),
       child: const Center(
         child: Icon(
           Icons.image_outlined,
           size: 40,
-          color: AppColors.onSurfaceVariant,
+          color: Color(0xFF9CA3AF),
         ),
       ),
     );
@@ -475,6 +891,29 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     final userId = authVm.currentUser?.id ?? '';
     final now = DateTime.now();
 
+    String? imageUrl = widget.product?.imageUrl;
+
+    if (_selectedImage != null) {
+      final mediaRepo = context.read<MediaRepository>();
+      final uploadResult = await mediaRepo.uploadImage(
+        _selectedImage!,
+        'products',
+        userId,
+      );
+
+      if (uploadResult.isSuccess) {
+        imageUrl = uploadResult.dataOrNull?.imageUrl;
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(uploadResult.exceptionOrNull?.message ?? 'Gagal mengunggah gambar.')),
+          );
+          setState(() => _isSaving = false);
+        }
+        return;
+      }
+    }
+
     final product = ProductModel(
       id: widget.product?.id ?? '',
       productName: _nameController.text.trim(),
@@ -482,7 +921,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
           ? _descriptionController.text.trim()
           : null,
       price: double.tryParse(_priceController.text.trim()) ?? 0,
-      imageUrl: widget.product?.imageUrl,
+      imageUrl: imageUrl,
       ownerId: userId,
       category: _selectedCategory,
       isAvailable: _isAvailable,
@@ -517,17 +956,32 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
         ),
         child: SingleChildScrollView(
           controller: scrollController,
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          padding: const EdgeInsets.fromLTRB(16, 24, 16, 30),
           child: Form(
             key: _formKey,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Handle bar
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
                 // Header
                 Center(
                   child: Text(
                     isEditing ? 'Edit Produk' : 'Tambah Produk',
-                    style: Theme.of(context).textTheme.titleLarge,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold
+                    ),
                   ),
                 ),
                 const SizedBox(height: 24),

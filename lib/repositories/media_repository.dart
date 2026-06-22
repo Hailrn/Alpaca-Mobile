@@ -7,6 +7,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:alpaca_mobile/core/network/api_client.dart';
 import 'package:alpaca_mobile/core/constants/firebase_constants.dart';
 import 'package:alpaca_mobile/core/exceptions/app_exception.dart';
 import 'package:alpaca_mobile/core/utils/result.dart';
@@ -23,16 +24,18 @@ class MediaRepository {
   MediaRepository({
     required FirestoreService firestoreService,
     required StorageService storageService,
+    required ApiClient apiClient,
   })  : _firestoreService = firestoreService,
-        _storageService = storageService;
+        _storageService = storageService,
+        _apiClient = apiClient;
 
   final FirestoreService _firestoreService;
   final StorageService _storageService;
+  final ApiClient _apiClient;
 
-  /// Uploads an image file and creates a media document in Firestore.
+  /// Uploads an image file to backend API.
   ///
-  /// The file is uploaded to Firebase Storage under the [category] path,
-  /// and a [MediaModel] document is created with the download URL.
+  /// Backend handles both file upload and database record creation.
   ///
   /// Returns the created [MediaModel] on success.
   Future<Result<MediaModel>> uploadImage(
@@ -40,72 +43,31 @@ class MediaRepository {
     String category,
     String uploadedBy,
   ) async {
-    // Generate a unique file name based on timestamp.
-    final fileName =
-        '${DateTime.now().millisecondsSinceEpoch}_${file.path.split(Platform.pathSeparator).last}';
-    final storagePath = '${FirebaseStoragePaths.uploads}/$category/$fileName';
+    // Upload file with category - backend saves to appropriate folder
+    final uploadResult = await _apiClient.uploadImage(file, category: category);
 
-    // Upload file to Firebase Storage.
-    final uploadResult = await _storageService.uploadFile(
-      path: storagePath,
-      file: file,
-    );
-
-    return uploadResult.when(
-      success: (metadata) async {
-        final downloadUrl = metadata.downloadUrl;
-        if (downloadUrl == null) {
-          return Result<MediaModel>.failure(
-            const MediaException(
-              message: 'Gagal mendapatkan URL unduhan setelah upload.',
-              code: 'DOWNLOAD_URL_NULL',
-            ),
-          );
-        }
-
-        final now = DateTime.now();
-        final mediaModel = MediaModel(
-          id: '', // Will be set by Firestore auto-generated ID.
-          imageUrl: downloadUrl,
-          uploadedBy: uploadedBy,
-          uploadedAt: now,
-          category: category,
-        );
-
-        // Create media document in Firestore.
-        final docResult = await _firestoreService.addDocument(
-          collection: FirebaseCollections.media,
-          data: mediaModel.toJson(),
-        );
-
-        return docResult.when(
-          success: (docId) =>
-              Result.success(mediaModel.copyWith(id: docId)),
-          failure: (exception) => Result<MediaModel>.failure(exception),
-        );
-      },
-      failure: (exception) => Result.failure(exception),
-    );
+    return uploadResult.map((imageUrl) {
+      // Return model based on upload response
+      // Note: backend should return full media object, not just URL
+      return MediaModel(
+        id: '', // Will be fetched when reloading
+        imageUrl: imageUrl,
+        uploadedBy: uploadedBy,
+        uploadedAt: DateTime.now(),
+        category: category,
+      );
+    });
   }
 
-  /// Retrieves all media items for a specific [ownerId].
+  /// Retrieves all media items for a specific [ownerId] from backend API.
   Future<Result<List<MediaModel>>> getMedia(String ownerId) async {
-    return _firestoreService.getCollection<MediaModel>(
-      collection: FirebaseCollections.media,
-      fromFirestore: (data, docId) =>
-          MediaModel.fromJson({...data, 'id': docId}),
-      queryParams: QueryParams(
-        where: [
-          WhereCondition(
-            field: 'uploadedBy',
-            operator: WhereOperator.isEqualTo,
-            value: ownerId,
-          ),
-        ],
-        orderBy: 'uploadedAt',
-        descending: true,
-      ),
-    );
+    return _apiClient.getPublic('/media', (j) {
+      final data = j is Map ? j['data'] : j;
+      if (data is List) {
+        return data.map((e) => MediaModel.fromJson(e as Map<String, dynamic>)).toList();
+      }
+      return [];
+    }, query: {'owner_id': ownerId});
   }
 
   /// Deletes a media item by its [id] and removes the file from Storage.
@@ -132,24 +94,9 @@ class MediaRepository {
   }
 
   /// Streams all media items for a specific [ownerId] in real-time.
+  /// NOTE: Currently disabled as backend uses REST API, not Firestore
   Stream<List<MediaModel>> streamMedia(String ownerId) {
-    return _firestoreService
-        .streamCollection<MediaModel>(
-          collection: FirebaseCollections.media,
-          fromFirestore: (data, docId) =>
-              MediaModel.fromJson({...data, 'id': docId}),
-          queryParams: QueryParams(
-            where: [
-              WhereCondition(
-                field: 'uploadedBy',
-                operator: WhereOperator.isEqualTo,
-                value: ownerId,
-              ),
-            ],
-            orderBy: 'uploadedAt',
-            descending: true,
-          ),
-        )
-        .map((result) => result.dataOrNull ?? []);
+    // Return empty stream - use loadMedia() instead for REST API
+    return Stream.value([]);
   }
 }

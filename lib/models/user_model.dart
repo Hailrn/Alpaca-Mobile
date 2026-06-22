@@ -77,10 +77,10 @@ class UserModel extends Equatable {
       email: json['email'] as String? ?? '',
       displayName: json['displayName'] as String? ?? '',
       role: UserRole.fromJson(json['role'] as String? ?? 'customer'),
-      photoUrl: json['photoUrl'] as String?,
-      phoneNumber: json['phoneNumber'] as String?,
-      createdAt: _parseDateTime(json['createdAt']),
-      updatedAt: _parseDateTime(json['updatedAt']),
+      photoUrl: json['photoUrl'] as String? ?? json['photo_url'] as String?,
+      phoneNumber: json['phoneNumber'] as String? ?? json['phone_number'] as String?,
+      createdAt: _parseDateTime(json['createdAt'] ?? json['created_at']),
+      updatedAt: _parseDateTime(json['updatedAt'] ?? json['updated_at']),
     );
   }
 
@@ -103,10 +103,23 @@ class UserModel extends Equatable {
       'role': role.toJson(),
       'photoUrl': photoUrl,
       'phoneNumber': phoneNumber,
+      'createdAt': createdAt.toIso8601String(), 'updatedAt': updatedAt.toIso8601String(),
+    };
+  }
+  /// Converts to Firestore-compatible map (with Timestamp).
+  Map<String, dynamic> toFirestoreJson() {
+    return {
+      'id': id,
+      'email': email,
+      'displayName': displayName,
+      'role': role.toJson(),
+      'photoUrl': photoUrl,
+      'phoneNumber': phoneNumber,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };
   }
+
 
   /// Creates a copy of this [UserModel] with the given fields replaced.
   UserModel copyWith({
@@ -143,3 +156,5 @@ class UserModel extends Equatable {
         updatedAt,
       ];
 }
+
+

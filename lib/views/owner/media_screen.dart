@@ -11,13 +11,11 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
-import 'package:alpaca_mobile/core/theme/app_colors.dart';
+import 'package:alpaca_mobile/core/theme/app_theme.dart';
 import 'package:alpaca_mobile/models/media_model.dart';
 import 'package:alpaca_mobile/viewmodels/auth_view_model.dart';
 import 'package:alpaca_mobile/viewmodels/media_view_model.dart';
 
-/// Screen that allows business owners to manage their media gallery.
-///
 /// Features:
 /// - Grid view of uploaded images with category labels
 /// - FAB to upload new images (camera or gallery)
@@ -95,75 +93,21 @@ class _MediaScreenState extends State<MediaScreen> {
 
     if (pickedFile == null || !mounted) return;
 
-    await _showCategoryDialog(File(pickedFile.path));
-  }
-
-  Future<void> _showCategoryDialog(File imageFile) async {
-    final categories = ['product', 'location', 'promotion', 'other'];
-    String selectedCategory = categories.first;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Kategori Gambar'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.file(
-                  imageFile,
-                  height: 150,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                ),
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: selectedCategory,
-                decoration: const InputDecoration(
-                  labelText: 'Kategori',
-                  prefixIcon: Icon(Icons.category_outlined),
-                ),
-                items: categories
-                    .map((c) => DropdownMenuItem(
-                          value: c,
-                          child: Text(_categoryLabel(c)),
-                        ))
-                    .toList(),
-                onChanged: (value) {
-                  if (value != null) {
-                    setDialogState(() => selectedCategory = value);
-                  }
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Batal'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Upload'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
+    // Langsung upload dengan category "gallery" tanpa dialog
     final userId = context.read<AuthViewModel>().currentUser?.id;
     if (userId == null) return;
 
-    await context.read<MediaViewModel>().uploadImage(
-          imageFile: imageFile,
-          category: selectedCategory,
-          uploadedBy: userId,
-        );
+    final mediaVm = context.read<MediaViewModel>();
+    
+    await mediaVm.uploadImage(
+      imageFile: File(pickedFile.path),
+      category: 'gallery',
+      uploadedBy: userId,
+    );
+    
+    // Wait a bit for backend to save, then reload
+    await Future.delayed(const Duration(milliseconds: 500));
+    await mediaVm.loadMedia(userId);
   }
 
   Future<void> _confirmDelete(MediaModel media) async {
@@ -175,6 +119,9 @@ class _MediaScreenState extends State<MediaScreen> {
           'Apakah Anda yakin ingin menghapus gambar ini? '
           'Tindakan ini tidak dapat dibatalkan.',
         ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -182,7 +129,7 @@ class _MediaScreenState extends State<MediaScreen> {
           ),
           FilledButton(
             style: FilledButton.styleFrom(
-              backgroundColor: AppColors.error,
+              backgroundColor: const Color(0xFFDC2626),
             ),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Hapus'),
@@ -206,6 +153,8 @@ class _MediaScreenState extends State<MediaScreen> {
 
   String _categoryLabel(String category) {
     switch (category.toLowerCase()) {
+      case 'gallery':
+        return 'Galeri';
       case 'product':
         return 'Produk';
       case 'location':
@@ -219,8 +168,10 @@ class _MediaScreenState extends State<MediaScreen> {
 
   Color _categoryColor(String category) {
     switch (category.toLowerCase()) {
-      case 'product':
+      case 'gallery':
         return AppColors.primary;
+      case 'product':
+        return AppColors.secondary;
       case 'location':
         return AppColors.info;
       case 'promotion':
@@ -235,26 +186,99 @@ class _MediaScreenState extends State<MediaScreen> {
     final mediaVm = context.watch<MediaViewModel>();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Media'),
-        actions: [
-          if (mediaVm.mediaList.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Center(
-                child: Text(
-                  '${mediaVm.mediaList.length} gambar',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-            ),
+      backgroundColor: AppColors.bg,
+      body: Column(
+        children: [
+          _buildHeader(mediaVm),
+          Expanded(child: _buildBody(mediaVm)),
         ],
       ),
-      body: _buildBody(mediaVm),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
         onPressed: mediaVm.isUploading ? null : _showUploadDialog,
-        icon: const Icon(Icons.add_a_photo_outlined),
-        label: const Text('Upload'),
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: const Icon(Icons.add_rounded),
+      ),
+    );
+  }
+
+  Widget _buildHeader(MediaViewModel mediaVm) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppColors.primaryDark, AppColors.primary],
+        ),
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(24),
+          bottomRight: Radius.circular(24),
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.photo_library_outlined,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Media',
+                      style: AppText.ui(
+                        size: 20,
+                        color: Colors.white,
+                        weight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      'Kelola galeri foto',
+                      style: AppText.ui(
+                        size: 13,
+                        color: Colors.white.withValues(alpha: 0.70),
+                        weight: FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (mediaVm.mediaList.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${mediaVm.mediaList.length} gambar',
+                    style: AppText.ui(
+                      size: 13,
+                      color: Colors.white,
+                      weight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -268,18 +292,26 @@ class _MediaScreenState extends State<MediaScreen> {
           children: [
             CircularProgressIndicator(
               value: mediaVm.uploadProgress > 0 ? mediaVm.uploadProgress : null,
+              color: const Color(0xFF22C55E),
             ),
-            const SizedBox(height: 16),
-            Text(
+            const SizedBox(height: 20),
+            const Text(
               'Mengupload gambar...',
-              style: Theme.of(context).textTheme.bodyMedium,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF1F2937),
+              ),
             ),
             if (mediaVm.uploadProgress > 0)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
                   '${(mediaVm.uploadProgress * 100).toInt()}%',
-                  style: Theme.of(context).textTheme.bodySmall,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF6B7280),
+                  ),
                 ),
               ),
           ],
@@ -288,7 +320,11 @@ class _MediaScreenState extends State<MediaScreen> {
     }
 
     if (mediaVm.isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: CircularProgressIndicator(
+          color: Color(0xFF22C55E),
+        ),
+      );
     }
 
     if (mediaVm.error != null) {
@@ -298,18 +334,41 @@ class _MediaScreenState extends State<MediaScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.error_outline, size: 64, color: AppColors.error),
-              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEE2E2),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Icon(
+                  Icons.error_outline_rounded,
+                  size: 56,
+                  color: Color(0xFFDC2626),
+                ),
+              ),
+              const SizedBox(height: 20),
               Text(
                 mediaVm.error!,
                 textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium,
+                style: const TextStyle(
+                  fontSize: 15,
+                  color: Color(0xFF1F2937),
+                  fontWeight: FontWeight.w500,
+                ),
               ),
               const SizedBox(height: 16),
-              FilledButton.icon(
+              ElevatedButton.icon(
                 onPressed: _loadMedia,
-                icon: const Icon(Icons.refresh),
+                icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Coba Lagi'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF22C55E),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
               ),
             ],
           ),
@@ -324,23 +383,36 @@ class _MediaScreenState extends State<MediaScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.photo_library_outlined,
-                size: 80,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Icon(
+                  Icons.photo_library_rounded,
+                  size: 64,
+                  color: Color(0xFF22C55E),
+                ),
               ),
-              const SizedBox(height: 16),
-              Text(
+              const SizedBox(height: 20),
+              const Text(
                 'Belum ada media',
-                style: Theme.of(context).textTheme.titleMedium,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1F2937),
+                ),
               ),
               const SizedBox(height: 8),
-              Text(
-                'Tap tombol upload untuk menambahkan gambar pertama Anda',
+              const Text(
+                'Tap tombol upload untuk menambahkan\ngambar pertama Anda',
                 textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Color(0xFF6B7280),
+                  height: 1.5,
+                ),
               ),
             ],
           ),
@@ -349,16 +421,17 @@ class _MediaScreenState extends State<MediaScreen> {
     }
 
     return RefreshIndicator(
+      color: const Color(0xFF22C55E),
       onRefresh: () async => _loadMedia(),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final crossAxisCount = constraints.maxWidth > 600 ? 4 : 2;
           return GridView.builder(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(20),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: crossAxisCount,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
               childAspectRatio: 1,
             ),
             itemCount: mediaVm.mediaList.length,
@@ -400,8 +473,12 @@ class _MediaGridItem extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
-      child: Card(
-        margin: EdgeInsets.zero,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border),
+        ),
         clipBehavior: Clip.antiAlias,
         child: Stack(
           fit: StackFit.expand,
@@ -418,11 +495,19 @@ class _MediaGridItem extends StatelessWidget {
                             loadingProgress.expectedTotalBytes!
                         : null,
                     strokeWidth: 2,
+                    color: AppColors.primary,
                   ),
                 );
               },
-              errorBuilder: (context, error, stackTrace) => const Center(
-                child: Icon(Icons.broken_image_outlined, size: 40),
+              errorBuilder: (context, error, stackTrace) => Container(
+                color: AppColors.surfaceMuted,
+                child: const Center(
+                  child: Icon(
+                    Icons.broken_image_rounded,
+                    size: 40,
+                    color: AppColors.disabled,
+                  ),
+                ),
               ),
             ),
             Positioned(
@@ -431,8 +516,8 @@ class _MediaGridItem extends StatelessWidget {
               right: 0,
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
+                  horizontal: 10,
+                  vertical: 8,
                 ),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -448,22 +533,47 @@ class _MediaGridItem extends StatelessWidget {
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
+                        horizontal: 8,
+                        vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: categoryColor.withValues(alpha: 0.9),
-                        borderRadius: BorderRadius.circular(4),
+                        color: categoryColor,
+                        borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
                         categoryLabel,
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
                       ),
                     ),
                   ],
+                ),
+              ),
+            ),
+            // Delete button
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFDC2626),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      blurRadius: 4,
+                    ),
+                  ],
+                ),
+                child: IconButton(
+                  onPressed: onLongPress,
+                  icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                  color: Colors.white,
+                  padding: const EdgeInsets.all(6),
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 ),
               ),
             ),
